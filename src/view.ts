@@ -17,7 +17,8 @@ import {
 	truncateToWidth,
 } from "@earendil-works/pi-tui";
 import { type FSWatcher, watch } from "node:fs";
-import { interrupt, steer } from "./rpc.ts";
+import { dirname, join } from "node:path";
+import { interrupt, resume, steer } from "./rpc.ts";
 import { type ChildStatus, type RunStatus, readRunStatus } from "./run-status.ts";
 import { Transcript, type TranscriptDisplay } from "./transcript.ts";
 
@@ -37,6 +38,8 @@ export async function openView(target: ViewTarget, events: EventBus, ctx: Extens
 	);
 }
 
+// Child states that take live input; any other state is revived with `resume`.
+const STEERABLE_STATES = new Set(["running", "queued"]);
 const HEADER_ROWS = 1;
 const STATUS_ROWS = 1;
 // File watchers fire in bursts while the child writes; one sync per burst is enough.
@@ -48,7 +51,8 @@ class ChildView implements Component, Focusable {
 	private readonly tui: TUI;
 	private readonly theme: Theme;
 	private readonly keybindings: KeybindingsManager;
-	private readonly target: ViewTarget;
+	// Replaced when a resume continues the child as a new async run.
+	private target: ViewTarget;
 	private readonly events: EventBus;
 	private readonly done: () => void;
 	private readonly display: TranscriptDisplay = { toolsExpanded: false, hideThinking: false };
@@ -56,7 +60,8 @@ class ChildView implements Component, Focusable {
 	private readonly editor: Editor;
 	private run: RunStatus | undefined;
 	private watchedSessionFile: string | undefined;
-	private readonly watchers: FSWatcher[] = [];
+	private runWatcher: FSWatcher | undefined;
+	private sessionWatcher: FSWatcher | undefined;
 	private readonly tick: NodeJS.Timeout;
 	private syncTimer: NodeJS.Timeout | undefined;
 	// Lines hidden below the viewport; 0 keeps the view pinned to the newest output.
@@ -88,7 +93,7 @@ class ChildView implements Component, Focusable {
 		});
 		this.editor.onSubmit = (text) => this.submit(text);
 		this.sync();
-		this.watchers.push(watch(target.asyncDir, () => this.scheduleSync()));
+		this.runWatcher = this.watch(target.asyncDir);
 		this.tick = setInterval(() => this.sync(), TICK_MS);
 	}
 
@@ -148,11 +153,21 @@ class ChildView implements Component, Focusable {
 	dispose(): void {
 		clearInterval(this.tick);
 		clearTimeout(this.syncTimer);
-		for (const watcher of this.watchers) watcher.close();
+		this.runWatcher?.close();
+		this.sessionWatcher?.close();
 	}
 
 	private get child(): ChildStatus | undefined {
 		return this.run?.children[this.target.index];
+	}
+
+	// A path can vanish or not exist yet (a fresh run directory); the tick covers it until it does.
+	private watch(path: string): FSWatcher | undefined {
+		try {
+			return watch(path, () => this.scheduleSync());
+		} catch {
+			return undefined;
+		}
 	}
 
 	private scheduleSync(): void {
@@ -171,7 +186,8 @@ class ChildView implements Component, Focusable {
 				// The runner records the session file only once the child session exists.
 				this.watchedSessionFile = sessionFile;
 				this.transcript.open(sessionFile);
-				this.watchers.push(watch(sessionFile, () => this.scheduleSync()));
+				this.sessionWatcher?.close();
+				this.sessionWatcher = this.watch(sessionFile);
 				changed = true;
 			} else {
 				changed = this.transcript.refresh() || changed;
@@ -188,9 +204,30 @@ class ChildView implements Component, Focusable {
 		if (!message) return;
 		this.editor.setText("");
 		this.setStatus("Sending…");
-		// "auto" steers a busy child and queues a follow-up for an idle one.
-		const result = await steer(this.events, this.runTarget(), message, "auto");
-		this.setStatus(result.ok ? result.text || "Delivered." : result.error);
+		if (STEERABLE_STATES.has(this.child?.state ?? "")) {
+			// "auto" steers a busy child and queues a follow-up for an idle one.
+			const result = await steer(this.events, this.runTarget(), message, "auto");
+			return this.setStatus(result.ok ? result.text || "Delivered." : result.error);
+		}
+		const result = await resume(this.events, this.runTarget(), message);
+		if (!result.ok) return this.setStatus(result.error);
+		if (!result.runId) return this.setStatus(result.text || "Resumed.");
+		this.follow({
+			runId: result.runId,
+			// pi-subagents keeps every async run directory side by side, named after its run id.
+			asyncDir: result.asyncDir ?? join(dirname(this.target.asyncDir), result.runId),
+			index: 0,
+		});
+		this.setStatus(`Resumed as ${result.runId.slice(0, 8)}.`);
+	}
+
+	// Switch to the run a resume started; its session usually continues the same file.
+	private follow(target: ViewTarget): void {
+		this.target = target;
+		this.run = undefined;
+		this.runWatcher?.close();
+		this.runWatcher = this.watch(target.asyncDir);
+		this.sync();
 	}
 
 	private async interrupt(): Promise<void> {

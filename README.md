@@ -18,13 +18,15 @@ Requires pi-subagents to be installed.
 - In FleetView (`/subagents-fleet`, or `↓` on an empty editor and then Enter), select a running child and press Enter.
 - `/sagent <async run dir> [child index]` opens a run directly.
 
+Inside tmux, pi-subagents' own tmux inspector takes Fleet's Enter; `alt+a` and `/sagent` still work.
+
 The view follows the child live: new messages and tool calls appear as the child writes them, and the header shows agent, model, state, tokens, tool count and elapsed time. Scrolled-up content stays in place while new output arrives.
 
 In the view:
 
 | Key (pi keybinding) | Action |
 |---|---|
-| Enter (`tui.input.submit`) | Send the message to the child: steers a busy child, queues a follow-up for an idle one |
+| Enter (`tui.input.submit`) | Send the message to the child: steers a running child (or queues a follow-up when it is between turns); resumes a paused, finished or failed child, and the view follows the resumed run |
 | Esc (`app.interrupt`) | Interrupt the child |
 | Ctrl+O (`app.tools.expand`) | Expand or collapse tool output |
 | `app.thinking.toggle` | Show or hide thinking |
@@ -43,11 +45,9 @@ Keys follow your `~/.pi/agent/keybindings.json`.
 
 `pickerShortcut` is the key that opens the picker; `false` registers none. Restart pi or run `/reload` after changing it.
 
-Inside tmux, pi-subagents' own tmux inspector takes Fleet's Enter; use `/sagent` there.
-
 ## How it works
 
-pi-sagent registers an inspector plugin through pi-subagents' public `pi-subagents:inspector-register:v1` event and sends steer and interrupt requests through its in-process RPC (`subagents:rpc:v1:*`). The transcript is read from the child's `session.jsonl`.
+pi-sagent registers an inspector plugin through pi-subagents' public `pi-subagents:inspector-register:v1` event and sends steer, interrupt and resume requests through its in-process RPC (`subagents:rpc:v1:*`). The transcript is read from the child's `session.jsonl`.
 
 ## License
 

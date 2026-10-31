@@ -10,7 +10,10 @@ export interface RunTarget {
 }
 
 /** Outcome of one RPC call, as pi-subagents reports it. */
-export type RpcResult = { ok: true; text: string } | { ok: false; error: string };
+export type RpcResult = { ok: true; text: string; details: Record<string, unknown> } | { ok: false; error: string };
+
+/** A resumed child runs as a new async run; `runId` names it when pi-subagents reports it. */
+export type ResumeResult = { ok: true; text: string; runId?: string; asyncDir?: string } | { ok: false; error: string };
 
 /** Delivery modes pi-subagents accepts for `steer`. */
 export type SteerMode = "steer" | "follow_up" | "auto";
@@ -25,6 +28,20 @@ export function steer(events: EventBus, target: RunTarget, message: string, mode
 	return call(events, "steer", { ...target, message, mode });
 }
 
+/** Revive a paused, completed or failed child with `message`; it continues as a new async run. */
+export async function resume(events: EventBus, target: RunTarget, message: string): Promise<ResumeResult> {
+	const result = await call(events, "resume", { ...target, message });
+	if (!result.ok) return result;
+	const { runId, asyncId, asyncDir } = result.details;
+	const id = typeof runId === "string" ? runId : typeof asyncId === "string" ? asyncId : undefined;
+	return {
+		ok: true,
+		text: result.text,
+		...(id ? { runId: id } : {}),
+		...(typeof asyncDir === "string" ? { asyncDir } : {}),
+	};
+}
+
 /** Ask a running child to stop its current turn; the run stays resumable. */
 export function interrupt(events: EventBus, target: RunTarget): Promise<RpcResult> {
 	return call(events, "interrupt", { ...target });
@@ -32,7 +49,7 @@ export function interrupt(events: EventBus, target: RunTarget): Promise<RpcResul
 
 interface RpcReply {
 	success?: boolean;
-	data?: { text?: unknown };
+	data?: { text?: unknown; details?: unknown };
 	error?: { message?: unknown };
 }
 
@@ -48,7 +65,14 @@ function call(events: EventBus, method: string, params: Record<string, unknown>)
 			unsubscribe();
 			// Wire input from another extension: check the shape before trusting it.
 			const reply = (raw ?? {}) as RpcReply;
-			if (reply.success) resolve({ ok: true, text: typeof reply.data?.text === "string" ? reply.data.text : "" });
+			if (reply.success) {
+				const details = reply.data?.details;
+				resolve({
+					ok: true,
+					text: typeof reply.data?.text === "string" ? reply.data.text : "",
+					details: details && typeof details === "object" ? (details as Record<string, unknown>) : {},
+				});
+			}
 			else resolve({ ok: false, error: String(reply.error?.message ?? `${method} failed`) });
 		});
 		events.emit(REQUEST_EVENT, { version: 1, requestId, method, params });
