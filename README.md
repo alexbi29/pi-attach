@@ -14,8 +14,11 @@ Requires pi-subagents to be installed.
 
 ## Use
 
+- `alt+a` or `/sagent`: pick one of this session's subagents, newest first, running or finished.
 - In FleetView (`/subagents-fleet`, or `↓` on an empty editor and then Enter), select a running child and press Enter.
-- Or run `/sagent <async run dir> [child index]`.
+- `/sagent <async run dir> [child index]` opens a run directly.
+
+The view follows the child live: new messages and tool calls appear as the child writes them, and the header shows agent, model, state, tokens, tool count and elapsed time. Scrolled-up content stays in place while new output arrives.
 
 In the view:
 
@@ -29,6 +32,16 @@ In the view:
 | Ctrl+D (`app.exit`, empty editor) | Close the view |
 
 Keys follow your `~/.pi/agent/keybindings.json`.
+
+## Configuration
+
+`~/.pi/agent/extensions/pi-sagent/config.json`, all keys optional:
+
+```json
+{ "pickerShortcut": "alt+a" }
+```
+
+`pickerShortcut` is the key that opens the picker; `false` registers none. Restart pi or run `/reload` after changing it.
 
 Inside tmux, pi-subagents' own tmux inspector takes Fleet's Enter; use `/sagent` there.
 

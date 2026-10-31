@@ -16,14 +16,16 @@ import {
 	type TuiMouseEventResult,
 	truncateToWidth,
 } from "@earendil-works/pi-tui";
-import { interrupt, type RunTarget, steer } from "./rpc.ts";
+import { type FSWatcher, watch } from "node:fs";
+import { interrupt, steer } from "./rpc.ts";
+import { type ChildStatus, type RunStatus, readRunStatus } from "./run-status.ts";
 import { Transcript, type TranscriptDisplay } from "./transcript.ts";
 
-/** What the view shows and where its input goes. */
+/** One child of an async run: the run's id and directory plus the child's index in it. */
 export interface ViewTarget {
-	title: string;
-	sessionFile: string;
-	run: RunTarget;
+	runId: string;
+	asyncDir: string;
+	index: number;
 }
 
 /** Show `target` over the main chat until the user closes it; resolves on close. */
@@ -37,6 +39,10 @@ export async function openView(target: ViewTarget, events: EventBus, ctx: Extens
 
 const HEADER_ROWS = 1;
 const STATUS_ROWS = 1;
+// File watchers fire in bursts while the child writes; one sync per burst is enough.
+const SYNC_DEBOUNCE_MS = 30;
+// Safety net for missed watcher events and the clock in the header.
+const TICK_MS = 1000;
 
 class ChildView implements Component, Focusable {
 	private readonly tui: TUI;
@@ -48,9 +54,15 @@ class ChildView implements Component, Focusable {
 	private readonly display: TranscriptDisplay = { toolsExpanded: false, hideThinking: false };
 	private readonly transcript: Transcript;
 	private readonly editor: Editor;
+	private run: RunStatus | undefined;
+	private watchedSessionFile: string | undefined;
+	private readonly watchers: FSWatcher[] = [];
+	private readonly tick: NodeJS.Timeout;
+	private syncTimer: NodeJS.Timeout | undefined;
 	// Lines hidden below the viewport; 0 keeps the view pinned to the newest output.
 	private scrollFromEnd = 0;
 	private transcriptRows = 0;
+	private lastBodyLength = 0;
 	private status = "";
 	private focusedValue = false;
 
@@ -75,7 +87,9 @@ class ChildView implements Component, Focusable {
 			selectList: getSelectListTheme(),
 		});
 		this.editor.onSubmit = (text) => this.submit(text);
-		this.reload();
+		this.sync();
+		this.watchers.push(watch(target.asyncDir, () => this.scheduleSync()));
+		this.tick = setInterval(() => this.sync(), TICK_MS);
 	}
 
 	get focused(): boolean {
@@ -92,6 +106,11 @@ class ChildView implements Component, Focusable {
 		const editorLines = this.editor.render(width);
 		this.transcriptRows = Math.max(1, rows - HEADER_ROWS - STATUS_ROWS - editorLines.length);
 		const body = this.transcript.render(width);
+		// Keep the lines the user scrolled to in place while new output arrives below them.
+		if (this.scrollFromEnd > 0 && body.length > this.lastBodyLength) {
+			this.scrollFromEnd += body.length - this.lastBodyLength;
+		}
+		this.lastBodyLength = body.length;
 		const maxScroll = Math.max(0, body.length - this.transcriptRows);
 		this.scrollFromEnd = Math.min(this.scrollFromEnd, maxScroll);
 		const end = body.length - this.scrollFromEnd;
@@ -126,12 +145,42 @@ class ChildView implements Component, Focusable {
 		this.editor.invalidate();
 	}
 
-	private reload(): void {
+	dispose(): void {
+		clearInterval(this.tick);
+		clearTimeout(this.syncTimer);
+		for (const watcher of this.watchers) watcher.close();
+	}
+
+	private get child(): ChildStatus | undefined {
+		return this.run?.children[this.target.index];
+	}
+
+	private scheduleSync(): void {
+		clearTimeout(this.syncTimer);
+		this.syncTimer = setTimeout(() => this.sync(), SYNC_DEBOUNCE_MS);
+	}
+
+	// Re-read the run record and the session file; render when either changed or the header clock runs.
+	private sync(): void {
+		const previous = JSON.stringify(this.run);
+		this.run = readRunStatus(this.target.asyncDir, this.target.runId) ?? this.run;
+		let changed = JSON.stringify(this.run) !== previous;
+		const sessionFile = this.child?.sessionFile;
 		try {
-			this.transcript.load(this.target.sessionFile);
+			if (sessionFile && sessionFile !== this.watchedSessionFile) {
+				// The runner records the session file only once the child session exists.
+				this.watchedSessionFile = sessionFile;
+				this.transcript.open(sessionFile);
+				this.watchers.push(watch(sessionFile, () => this.scheduleSync()));
+				changed = true;
+			} else {
+				changed = this.transcript.refresh() || changed;
+			}
 		} catch (error) {
-			this.status = `Cannot read ${this.target.sessionFile}: ${error instanceof Error ? error.message : String(error)}`;
+			this.status = `Cannot read ${sessionFile}: ${error instanceof Error ? error.message : String(error)}`;
+			changed = true;
 		}
+		if (changed || this.run?.endedAt === undefined) this.tui.requestRender();
 	}
 
 	private async submit(text: string): Promise<void> {
@@ -140,14 +189,18 @@ class ChildView implements Component, Focusable {
 		this.editor.setText("");
 		this.setStatus("Sending…");
 		// "auto" steers a busy child and queues a follow-up for an idle one.
-		const result = await steer(this.events, this.target.run, message, "auto");
+		const result = await steer(this.events, this.runTarget(), message, "auto");
 		this.setStatus(result.ok ? result.text || "Delivered." : result.error);
 	}
 
 	private async interrupt(): Promise<void> {
 		this.setStatus("Interrupting…");
-		const result = await interrupt(this.events, this.target.run);
+		const result = await interrupt(this.events, this.runTarget());
 		this.setStatus(result.ok ? result.text || "Interrupted." : result.error);
+	}
+
+	private runTarget() {
+		return { id: this.target.runId, index: this.target.index };
 	}
 
 	private toggle(key: keyof TranscriptDisplay): void {
@@ -168,8 +221,17 @@ class ChildView implements Component, Focusable {
 	}
 
 	private renderHeader(width: number): string {
-		const position = this.scrollFromEnd > 0 ? this.theme.fg("dim", ` · ↑${this.scrollFromEnd}`) : "";
-		return truncateToWidth(`${this.theme.fg("accent", this.theme.bold(this.target.title))}${position}`, width);
+		const child = this.child;
+		const name = `${child?.agent ?? "subagent"} · ${this.target.runId.slice(0, 8)}`;
+		const facts = [
+			child?.model,
+			child?.state ?? this.run?.state ?? "starting",
+			child?.tokens === undefined ? undefined : `${formatCount(child.tokens)} tokens`,
+			child?.toolCount === undefined ? undefined : `${child.toolCount} tools`,
+			this.run?.startedAt === undefined ? undefined : formatDuration((this.run.endedAt ?? Date.now()) - this.run.startedAt),
+			this.scrollFromEnd > 0 ? `↑${this.scrollFromEnd}` : undefined,
+		].filter((fact) => fact !== undefined);
+		return truncateToWidth(`${this.theme.fg("accent", this.theme.bold(name))} ${this.theme.fg("dim", facts.join(" · "))}`, width);
 	}
 
 	private renderStatus(width: number): string {
@@ -181,4 +243,13 @@ class ChildView implements Component, Focusable {
 		].join(" · ");
 		return truncateToWidth(this.status ? `${this.theme.fg("dim", this.status)} · ${hints}` : hints, width);
 	}
+}
+
+function formatCount(value: number): string {
+	return value < 1000 ? String(value) : `${(value / 1000).toFixed(1)}k`;
+}
+
+function formatDuration(ms: number): string {
+	const seconds = Math.max(0, Math.round(ms / 1000));
+	return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }

@@ -1,6 +1,4 @@
 // FleetView hook: an inspector plugin so Enter/H on a child opens our view instead of a terminal pane.
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { EventBus, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { openView } from "./view.ts";
 
@@ -29,7 +27,6 @@ interface InspectorTarget {
 	runId: string;
 	asyncDir: string;
 	index?: number;
-	status: { steps?: unknown[] };
 }
 interface InspectorContext {
 	target: InspectorTarget;
@@ -60,41 +57,12 @@ function createPlugin(events: EventBus, getContext: () => ExtensionContext | und
 		async open({ target }) {
 			const ctx = getContext();
 			if (!ctx) return result("pi-sagent has no active session.", true);
-			const index = target.index ?? 0;
-			const step = stepAt(target, index);
-			if (!step?.sessionFile) return result(`Run ${target.runId} has no session file for child ${index} yet.`, true);
-			const title = `${step.agent ?? "subagent"} · ${target.runId.slice(0, 8)}${target.index === undefined ? "" : ` #${index}`}`;
+			const view = { runId: target.runId, asyncDir: target.asyncDir, index: target.index ?? 0 };
 			// Fleet awaits open(); the view stays up after it returns, stacked above Fleet's overlay.
-			void openView({ title, sessionFile: step.sessionFile, run: { id: target.runId, index } }, events, ctx);
-			return result(`Opened ${title}.`);
+			void openView(view, events, ctx);
+			return result(`Opened ${target.runId.slice(0, 8)} in this window.`);
 		},
 	};
-}
-
-interface StepInfo {
-	agent?: string;
-	sessionFile?: string;
-}
-
-// Status steps are pi-subagents' status.json records; read only the two fields the view needs.
-function stepAt(target: InspectorTarget, index: number): StepInfo | undefined {
-	const steps = target.status.steps ?? readStatusSteps(target.asyncDir);
-	const step = steps?.[index];
-	if (!step || typeof step !== "object") return undefined;
-	const { agent, sessionFile } = step as Record<string, unknown>;
-	return {
-		...(typeof agent === "string" ? { agent } : {}),
-		...(typeof sessionFile === "string" ? { sessionFile } : {}),
-	};
-}
-
-function readStatusSteps(asyncDir: string): unknown[] | undefined {
-	try {
-		const status = JSON.parse(readFileSync(join(asyncDir, "status.json"), "utf-8")) as { steps?: unknown };
-		return Array.isArray(status.steps) ? status.steps : undefined;
-	} catch {
-		return undefined;
-	}
 }
 
 function result(text: string, isError = false): InspectorResult {

@@ -1,11 +1,13 @@
-// pi-sagent entry: opens pi-subagents children inside the main pi window, from FleetView or /sagent.
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+// pi-sagent entry: opens pi-subagents children inside the main pi window, from FleetView, a shortcut or /sagent.
+import { existsSync } from "node:fs";
+import { basename, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { loadConfig } from "./config.ts";
 import { type Registration, registerInspector } from "./inspector.ts";
+import { pickChild } from "./picker.ts";
 import { openView } from "./view.ts";
 
-/** Extension factory: registers the FleetView inspector and the /sagent command in parent sessions. */
+/** Extension factory: registers the FleetView inspector, the picker shortcut and /sagent in parent sessions. */
 export default function (pi: ExtensionAPI) {
 	// Global extensions also load inside every subagent; the child side has nothing to do until M3.
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
@@ -25,27 +27,26 @@ export default function (pi: ExtensionAPI) {
 		current = undefined;
 	});
 
+	const openPicked = async (ctx: ExtensionContext) => {
+		const target = await pickChild(ctx);
+		if (target) await openView(target, pi.events, ctx);
+	};
+
+	const { pickerShortcut } = loadConfig();
+	if (pickerShortcut) {
+		pi.registerShortcut(pickerShortcut, { description: "Open a subagent in this window", handler: openPicked });
+	}
+
 	pi.registerCommand("sagent", {
-		description: "Open a subagent run in this window: /sagent <async run dir> [child index]",
+		description: "Open a subagent in this window: /sagent [async run dir] [child index]",
 		handler: async (args, ctx) => {
-			const [path, indexArg] = args.trim().split(/\s+/);
-			if (!path) return ctx.ui.notify("Usage: /sagent <async run dir> [child index]", "warning");
-			const index = indexArg ? Number.parseInt(indexArg, 10) : 0;
-			const target = resolvePath(path, index);
-			if (typeof target === "string") return ctx.ui.notify(target, "error");
+			const [path, indexArg] = args.trim().split(/\s+/).filter(Boolean);
+			if (!path) return openPicked(ctx);
+			if (!existsSync(path)) return ctx.ui.notify(`No such async run directory: ${path}`, "error");
+			const asyncDir = resolve(path);
+			// pi-subagents names each async run directory after its run id.
+			const target = { runId: basename(asyncDir), asyncDir, index: indexArg ? Number.parseInt(indexArg, 10) : 0 };
 			await openView(target, pi.events, ctx);
 		},
 	});
-}
-
-function resolvePath(path: string, index: number) {
-	if (!existsSync(path)) return `No such file or directory: ${path}`;
-	if (!statSync(path).isDirectory()) return `${path} is not an async run directory.`;
-	const steps = (JSON.parse(readFileSync(join(path, "status.json"), "utf-8")) as { steps?: { sessionFile?: string }[] })
-		.steps;
-	const sessionFile = steps?.[index]?.sessionFile;
-	if (!sessionFile) return `${path} has no session file for child ${index}.`;
-	// pi-subagents names each async run directory after its run id.
-	const id = basename(path);
-	return { title: `${id.slice(0, 8)} #${index}`, sessionFile, run: { id, index } };
 }
