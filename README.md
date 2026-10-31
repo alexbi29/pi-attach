@@ -14,11 +14,11 @@ Requires pi-subagents to be installed.
 
 ## Use
 
-- `alt+a` or `/attach`: pick one of this session's subagents, newest first, running or finished.
+- `ctrl+shift+a` or `/attach`: pick one of this session's subagents, newest first, running or finished.
 - In FleetView (`/subagents-fleet`, or `↓` on an empty editor and then Enter), select a running child and press Enter.
 - `/attach <async run dir> [child index]` opens a run directly.
 
-Inside tmux, pi-subagents' own tmux inspector takes Fleet's Enter; `alt+a` and `/attach` still work.
+Inside tmux, pi-subagents' own tmux inspector takes Fleet's Enter; `ctrl+shift+a` and `/attach` still work.
 
 The view follows the child live: text and thinking stream token by token, running tools show their output as it arrives, and the header shows agent, model, state, tokens, tool count and elapsed time. Scrolled-up content stays in place while new output arrives; sending a message jumps back to the end.
 
@@ -40,10 +40,10 @@ Keys follow your `~/.pi/agent/keybindings.json`.
 `~/.pi/agent/extensions/pi-attach/config.json`, all keys optional:
 
 ```json
-{ "pickerShortcut": "alt+a" }
+{ "pickerShortcut": "ctrl+shift+a" }
 ```
 
-`pickerShortcut` is the key that opens the picker; `false` registers none. Restart pi or run `/reload` after changing it.
+`pickerShortcut` is the key that opens the picker; `false` registers none. Ctrl+Shift combinations need a terminal that reports them (most modern terminals, including iTerm2, Ghostty, kitty and WezTerm); `/attach` works everywhere. Restart pi or run `/reload` after changing it.
 
 ## How it works
 

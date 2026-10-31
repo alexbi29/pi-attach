@@ -26,5 +26,6 @@ export function loadConfig(): Config {
 	};
 }
 
-// alt+a ("agents") is unbound in pi's default keymap.
-const DEFAULTS: Config = { pickerShortcut: "alt+a" };
+// Unbound in pi's default keymap. Not alt+a: macOS terminals type "å" for Option+A unless Option is set to send Meta.
+// Ctrl+Shift needs a terminal that reports it (kitty keyboard protocol or modifyOtherKeys), as pi's own ctrl+shift keys do.
+const DEFAULTS: Config = { pickerShortcut: "ctrl+shift+a" };
