@@ -4,13 +4,14 @@ import { basename, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "./config.ts";
 import { type Registration, registerInspector } from "./inspector.ts";
+import { publishLiveStream } from "./live-stream.ts";
 import { pickChild } from "./picker.ts";
 import { openView } from "./view.ts";
 
-/** Extension factory: registers the FleetView inspector, the picker shortcut and /sagent in parent sessions. */
+/** Extension factory: the live-stream publisher in subagents; inspector, picker shortcut and /sagent in parents. */
 export default function (pi: ExtensionAPI) {
-	// Global extensions also load inside every subagent; the child side has nothing to do until M3.
-	if (process.env.PI_SUBAGENT_CHILD === "1") return;
+	// Global extensions also load inside every subagent: there, the only job is serving the live stream.
+	if (process.env.PI_SUBAGENT_CHILD === "1") return publishLiveStream(pi);
 
 	// Inspector calls carry no UI handle, so keep the context of the live session (replaced on every start).
 	let current: ExtensionContext | undefined;

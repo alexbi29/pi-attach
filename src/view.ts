@@ -18,6 +18,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { type FSWatcher, watch } from "node:fs";
 import { dirname, join } from "node:path";
+import { connectLiveStream, type LiveStreamConnection, type StreamFrame } from "./live-stream.ts";
 import { interrupt, resume, steer } from "./rpc.ts";
 import { type ChildStatus, type RunStatus, readRunStatus } from "./run-status.ts";
 import { Transcript, type TranscriptDisplay } from "./transcript.ts";
@@ -62,6 +63,7 @@ class ChildView implements Component, Focusable {
 	private watchedSessionFile: string | undefined;
 	private runWatcher: FSWatcher | undefined;
 	private sessionWatcher: FSWatcher | undefined;
+	private live: LiveStreamConnection | undefined;
 	private readonly tick: NodeJS.Timeout;
 	private syncTimer: NodeJS.Timeout | undefined;
 	// Lines hidden below the viewport; 0 keeps the view pinned to the newest output.
@@ -155,6 +157,7 @@ class ChildView implements Component, Focusable {
 		clearTimeout(this.syncTimer);
 		this.runWatcher?.close();
 		this.sessionWatcher?.close();
+		this.live?.close();
 	}
 
 	private get child(): ChildStatus | undefined {
@@ -196,13 +199,49 @@ class ChildView implements Component, Focusable {
 			this.status = `Cannot read ${sessionFile}: ${error instanceof Error ? error.message : String(error)}`;
 			changed = true;
 		}
+		this.connectLive();
 		if (changed || this.run?.endedAt === undefined) this.tui.requestRender();
+	}
+
+	// The child opens its socket at session start; until then (and after it ends) each tick retries.
+	private connectLive(): void {
+		const sessionFile = this.watchedSessionFile;
+		if (this.live || !sessionFile || !STEERABLE_STATES.has(this.child?.state ?? "")) return;
+		const connection = connectLiveStream(
+			sessionFile,
+			(frame) => this.onFrame(frame),
+			() => {
+				if (this.live === connection) this.live = undefined;
+			},
+		);
+		this.live = connection;
+	}
+
+	private onFrame(frame: StreamFrame): void {
+		switch (frame.type) {
+			case "partial":
+				this.transcript.showPartial(frame.message);
+				break;
+			case "tool_start":
+				this.transcript.markToolStarted(frame.toolCallId);
+				break;
+			case "tool_update":
+				this.transcript.showToolOutput(frame.toolCallId, frame.output);
+				break;
+			case "message_end":
+				// The finished message lands in the session file next; pick it up without waiting for the tick.
+				this.scheduleSync();
+				break;
+		}
+		this.tui.requestRender();
 	}
 
 	private async submit(text: string): Promise<void> {
 		const message = text.trim();
 		if (!message) return;
 		this.editor.setText("");
+		// Like the main chat, sending jumps back to the newest output.
+		this.scrollFromEnd = 0;
 		this.setStatus("Sending…");
 		if (STEERABLE_STATES.has(this.child?.state ?? "")) {
 			// "auto" steers a busy child and queues a follow-up for an idle one.
@@ -225,6 +264,9 @@ class ChildView implements Component, Focusable {
 	private follow(target: ViewTarget): void {
 		this.target = target;
 		this.run = undefined;
+		// The resumed child runs in a new runner process with its own socket.
+		this.live?.close();
+		this.live = undefined;
 		this.runWatcher?.close();
 		this.runWatcher = this.watch(target.asyncDir);
 		this.sync();

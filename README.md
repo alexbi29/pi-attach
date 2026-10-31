@@ -20,7 +20,7 @@ Requires pi-subagents to be installed.
 
 Inside tmux, pi-subagents' own tmux inspector takes Fleet's Enter; `alt+a` and `/sagent` still work.
 
-The view follows the child live: new messages and tool calls appear as the child writes them, and the header shows agent, model, state, tokens, tool count and elapsed time. Scrolled-up content stays in place while new output arrives.
+The view follows the child live: text and thinking stream token by token, running tools show their output as it arrives, and the header shows agent, model, state, tokens, tool count and elapsed time. Scrolled-up content stays in place while new output arrives; sending a message jumps back to the end.
 
 In the view:
 
@@ -48,6 +48,10 @@ Keys follow your `~/.pi/agent/keybindings.json`.
 ## How it works
 
 pi-sagent registers an inspector plugin through pi-subagents' public `pi-subagents:inspector-register:v1` event and sends steer, interrupt and resume requests through its in-process RPC (`subagents:rpc:v1:*`). The transcript is read from the child's `session.jsonl`.
+
+Streaming needs pi-sagent inside the child too. pi-subagents loads your installed extensions into every child by default, and there pi-sagent only listens on a local Unix socket (`<tmpdir>/pi-sagent-<uid>/`, owner-only) and forwards streaming updates to a connected view. It sends nothing while no view is connected. If you restrict child extensions with `subagents.defaultExtensions`, add pi-sagent to `subagents.defaultSubagentOnlyExtensions`; without it the view still updates once per finished message.
+
+Streaming uses Unix sockets and is not available on Windows.
 
 ## License
 

@@ -19,8 +19,10 @@ import {
 	UserMessageComponent,
 } from "@earendil-works/pi-coding-agent";
 import { Container, Spacer, type TUI } from "@earendil-works/pi-tui";
+import type { ToolOutput } from "./live-stream.ts";
 
 type AgentMessage = SessionContext["messages"][number];
+type AssistantMessage = Extract<AgentMessage, { role: "assistant" }>;
 // ToolExecutionComponent takes `ToolDefinition<any, any, any>`: each built-in tool has its own schema type.
 // biome-ignore lint/suspicious/noExplicitAny: matches pi's own renderer slot type
 type AnyToolDefinition = ToolDefinition<any, any, any>;
@@ -44,6 +46,10 @@ export class Transcript extends Container {
 	private assistants: AssistantMessageComponent[] = [];
 	// Tool calls still waiting for their result; results can arrive in a later append.
 	private pending = new Map<string, ToolExecutionComponent>();
+	// The assistant message the child is streaming, shown last until the session file holds it.
+	private streaming: AssistantMessageComponent | undefined;
+	// Live tool output that arrived before its tool call reached the session file.
+	private readonly earlyOutputs = new Map<string, ToolOutput>();
 
 	constructor(tui: TUI, cwd: string, display: TranscriptDisplay) {
 		super();
@@ -75,10 +81,32 @@ export class Transcript extends Container {
 		return true;
 	}
 
+	/** Show the message the child is streaming below everything the session file holds. */
+	showPartial(message: AssistantMessage): void {
+		if (!this.streaming) {
+			this.streaming = new AssistantMessageComponent(undefined, this.display.hideThinking, getMarkdownTheme());
+			this.addChild(this.streaming);
+		}
+		this.streaming.updateContent(message, true);
+	}
+
+	/** Mark a tool call as executing, as the main chat does on `tool_execution_start`. */
+	markToolStarted(toolCallId: string): void {
+		this.pending.get(toolCallId)?.markExecutionStarted();
+	}
+
+	/** Show a running tool's output so far. */
+	showToolOutput(toolCallId: string, output: ToolOutput): void {
+		const tool = this.pending.get(toolCallId);
+		if (tool) tool.updateResult(output, true);
+		else this.earlyOutputs.set(toolCallId, output);
+	}
+
 	/** Apply the current display toggles to every message already rendered. */
 	applyDisplay(): void {
 		for (const tool of this.tools) tool.setExpanded(this.display.toolsExpanded);
 		for (const assistant of this.assistants) assistant.setHideThinkingBlock(this.display.hideThinking);
+		this.streaming?.setHideThinkingBlock(this.display.hideThinking);
 	}
 
 	private reload(): boolean {
@@ -90,6 +118,7 @@ export class Transcript extends Container {
 		this.tools = [];
 		this.assistants = [];
 		this.pending = new Map();
+		this.streaming = undefined;
 		this.renderMessages(buildSessionContext(sessionEntries(content)).messages);
 		return true;
 	}
@@ -98,6 +127,10 @@ export class Transcript extends Container {
 	// and each tool result fills the call it answers.
 	private renderMessages(messages: AgentMessage[]): void {
 		const pending = this.pending;
+		// New file content goes above the streaming message; a finished assistant message replaces it.
+		const streaming = this.streaming;
+		if (streaming) this.removeChild(streaming);
+		let assistantArrived = false;
 		for (const message of messages) {
 			if (message.role === "user") {
 				const text = userText(message.content);
@@ -106,6 +139,7 @@ export class Transcript extends Container {
 				this.addChild(new UserMessageComponent(text, getMarkdownTheme()));
 			} else if (message.role === "assistant") {
 				const assistant = new AssistantMessageComponent(message, this.display.hideThinking, getMarkdownTheme());
+				assistantArrived = true;
 				this.assistants.push(assistant);
 				this.addChild(assistant);
 				for (const part of message.content) {
@@ -120,6 +154,9 @@ export class Transcript extends Container {
 						this.cwd,
 					);
 					tool.setExpanded(this.display.toolsExpanded);
+					const early = this.earlyOutputs.get(part.id);
+					if (early) tool.updateResult(early, true);
+					this.earlyOutputs.delete(part.id);
 					this.tools.push(tool);
 					this.addChild(tool);
 					pending.set(part.id, tool);
@@ -129,6 +166,8 @@ export class Transcript extends Container {
 				pending.delete(message.toolCallId);
 			}
 		}
+		if (assistantArrived) this.streaming = undefined;
+		else if (streaming) this.addChild(streaming);
 	}
 }
 
