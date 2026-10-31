@@ -1,4 +1,4 @@
-// User settings from `<agent dir>/extensions/pi-sagent/config.json`; every key is optional.
+// User settings from `<agent dir>/extensions/pi-attach/config.json`; every key is optional.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -12,7 +12,7 @@ export interface Config {
 
 /** Defaults merged with the user's config file; a missing or broken file yields the defaults. */
 export function loadConfig(): Config {
-	const path = join(getAgentDir(), "extensions", "pi-sagent", "config.json");
+	const path = join(getAgentDir(), "extensions", "pi-attach", "config.json");
 	let raw: unknown;
 	try {
 		raw = JSON.parse(readFileSync(path, "utf-8"));

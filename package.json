@@ -1,5 +1,5 @@
 {
-  "name": "pi-sagent",
+  "name": "pi-attach",
   "version": "0.0.1",
   "description": "Open pi-subagents children in the main pi window: live transcript with thinking, steer, interrupt, resume.",
   "type": "module",

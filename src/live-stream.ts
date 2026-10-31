@@ -130,7 +130,7 @@ export function connectLiveStream(
 
 const PARTIAL_INTERVAL_MS = 50;
 // Unix socket paths are limited to about 104 bytes, so the session file is hashed into a short name.
-const SOCKET_DIR = join(tmpdir(), `pi-sagent-${process.getuid?.() ?? "user"}`);
+const SOCKET_DIR = join(tmpdir(), `pi-attach-${process.getuid?.() ?? "user"}`);
 
 function liveSocketPath(sessionFile: string): string {
 	return join(SOCKET_DIR, `${createHash("sha256").update(sessionFile).digest("hex").slice(0, 16)}.sock`);

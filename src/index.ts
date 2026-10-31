@@ -1,4 +1,4 @@
-// pi-sagent entry: opens pi-subagents children inside the main pi window, from FleetView, a shortcut or /sagent.
+// pi-attach entry: opens pi-subagents children inside the main pi window, from FleetView, a shortcut or /attach.
 import { existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -8,7 +8,7 @@ import { publishLiveStream } from "./live-stream.ts";
 import { pickChild } from "./picker.ts";
 import { openView } from "./view.ts";
 
-/** Extension factory: the live-stream publisher in subagents; inspector, picker shortcut and /sagent in parents. */
+/** Extension factory: the live-stream publisher in subagents; inspector, picker shortcut and /attach in parents. */
 export default function (pi: ExtensionAPI) {
 	// Global extensions also load inside every subagent: there, the only job is serving the live stream.
 	if (process.env.PI_SUBAGENT_CHILD === "1") return publishLiveStream(pi);
@@ -38,8 +38,8 @@ export default function (pi: ExtensionAPI) {
 		pi.registerShortcut(pickerShortcut, { description: "Open a subagent in this window", handler: openPicked });
 	}
 
-	pi.registerCommand("sagent", {
-		description: "Open a subagent in this window: /sagent [async run dir] [child index]",
+	pi.registerCommand("attach", {
+		description: "Open a subagent in this window: /attach [async run dir] [child index]",
 		handler: async (args, ctx) => {
 			const [path, indexArg] = args.trim().split(/\s+/).filter(Boolean);
 			if (!path) return openPicked(ctx);

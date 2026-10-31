@@ -50,13 +50,13 @@ interface RegistrationRequest {
 
 function createPlugin(events: EventBus, getContext: () => ExtensionContext | undefined): InspectorPlugin {
 	return {
-		name: "pi-sagent",
+		name: "pi-attach",
 		available: () => getContext()?.mode === "tui",
 		// The view lives in this pi window and closes with it; there is no pane binding to own.
 		owns: () => false,
 		async open({ target }) {
 			const ctx = getContext();
-			if (!ctx) return result("pi-sagent has no active session.", true);
+			if (!ctx) return result("pi-attach has no active session.", true);
 			const view = { runId: target.runId, asyncDir: target.asyncDir, index: target.index ?? 0 };
 			// Fleet awaits open(); the view stays up after it returns, stacked above Fleet's overlay.
 			void openView(view, events, ctx);
