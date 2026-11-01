@@ -1,4 +1,4 @@
-// Inline list of this session's subagents under the editor: ↓ on an empty editor enters it, Enter opens one.
+// Inline list of this session's subagents under the editor: ↓ on an empty editor or the shortcut opens it, Enter opens a child.
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { type Editor, getKeybindings, isKeyRelease, type TUI, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { formatContext, formatDuration, shortKeyHint } from "./format.ts";
@@ -13,22 +13,24 @@ export interface RosterEntry {
 	child: ChildStatus;
 	/** "2/4" for a child of a multi-step run; absent for a single child. */
 	step?: string;
+	/** When the child ended; absent while it is active. */
+	endedAt?: number;
 }
 
-/** Children worth listing at `now`: active ones first, then ones that ended in the last 10 minutes; newest first in each. */
-export function rosterEntries(runs: RunStatus[], now: number): RosterEntry[] {
+/** Every started child of `runs`: active ones first, then the rest; newest first in each. */
+export function rosterEntries(runs: RunStatus[]): RosterEntry[] {
 	const entries = runs.flatMap((run) =>
 		run.children.flatMap((child, index): RosterEntry[] => {
 			// A child that has not started has nothing to show yet.
 			if (child.state === "pending") return [];
-			const ended = child.endedAt ?? run.endedAt ?? now;
-			if (!isActive(child) && now - ended > RECENT_MS) return [];
+			const endedAt = isActive(child) ? undefined : (child.endedAt ?? run.endedAt);
 			return [
 				{
 					key: `${run.runId}:${index}`,
 					target: { runId: run.runId, asyncDir: run.asyncDir, index },
 					child,
 					...(run.children.length > 1 ? { step: `${index + 1}/${run.children.length}` } : {}),
+					...(endedAt === undefined ? {} : { endedAt }),
 				},
 			];
 		}),
@@ -38,37 +40,57 @@ export function rosterEntries(runs: RunStatus[], now: number): RosterEntry[] {
 	);
 }
 
-// Long enough to read a result after a child ends; older children stay reachable through the picker.
+/** Whether `entry` belongs to the default view at `now`: active (no end time), or ended in the last 10 minutes. */
+export function isRecent(entry: RosterEntry, now: number): boolean {
+	return entry.endedAt === undefined || now - entry.endedAt <= RECENT_MS;
+}
+
+// Long enough to read a result after a child ends; Tab in the list shows older ones.
 const RECENT_MS = 10 * 60_000;
 
 function isActive(child: ChildStatus): boolean {
 	return child.state === "running" || child.state === "queued";
 }
 
+// Which children the open list shows; it always opens on "recent" unless only older ones exist.
+type Scope = "recent" | "all";
+
 /** The widget and its keys for one session; `dispose` removes both. */
 export class Roster {
 	private readonly runs: SessionRuns;
-	private readonly open: (target: ViewTarget) => void;
+	private readonly onOpen: (target: ViewTarget) => void;
 	private readonly ctx: ExtensionContext;
 	private readonly timer: NodeJS.Timeout;
 	private readonly stopInput: () => void;
-	private entries: RosterEntry[] = [];
+	// Task lines by session file: a child's task never changes, so its file is read once.
+	private readonly tasks = new Map<string, string>();
+	private all: RosterEntry[] = [];
+	private recent: RosterEntry[] = [];
+	private scope: Scope = "recent";
 	private selectedKey: string | undefined;
 	// True while ↑↓ move the selection instead of the editor cursor.
 	private active = false;
 	private shown = false;
 	private tui: TUI | undefined;
-	// Task lines by session file: a child's task never changes, so its file is read once.
-	private readonly tasks = new Map<string, string>();
 
-	constructor(runs: SessionRuns, open: (target: ViewTarget) => void, ctx: ExtensionContext) {
+	constructor(runs: SessionRuns, onOpen: (target: ViewTarget) => void, ctx: ExtensionContext) {
 		this.runs = runs;
-		this.open = open;
+		this.onOpen = onOpen;
 		this.ctx = ctx;
 		this.stopInput = ctx.ui.onTerminalInput((data) => this.handleKey(data));
 		// Also ticks the elapsed time of running children.
 		this.timer = setInterval(() => this.refresh(), REFRESH_MS);
 		this.timer.unref();
+		this.refresh();
+	}
+
+	/** Open the list from a shortcut or command: recent children, or all of them when none is recent. */
+	show(): void {
+		this.refresh();
+		if (this.all.length === 0) return this.ctx.ui.notify("No subagent runs in this session yet.", "info");
+		this.scope = this.recent.length > 0 ? "recent" : "all";
+		this.selectedKey = this.entries()[0]?.key;
+		this.active = true;
 		this.refresh();
 	}
 
@@ -78,20 +100,27 @@ export class Roster {
 		if (this.shown) this.ctx.ui.setWidget(WIDGET_KEY, undefined);
 	}
 
+	private entries(): RosterEntry[] {
+		return this.scope === "all" ? this.all : this.recent;
+	}
+
 	private refresh(): void {
-		this.entries = rosterEntries(this.runs.list(), Date.now());
-		if (this.entries.length === 0) {
-			this.active = false;
+		const now = Date.now();
+		this.all = rosterEntries(this.runs.list());
+		this.recent = this.all.filter((entry) => isRecent(entry, now));
+		const entries = this.entries();
+		if (entries.length === 0) {
+			this.close();
 			if (this.shown) this.ctx.ui.setWidget(WIDGET_KEY, undefined);
 			this.shown = false;
 			return;
 		}
-		for (const { child } of this.entries) {
+		for (const { child } of entries) {
 			if (!child.sessionFile || this.tasks.has(child.sessionFile)) continue;
 			const task = readTask(child.sessionFile);
 			if (task) this.tasks.set(child.sessionFile, task);
 		}
-		if (!this.entries.some((entry) => entry.key === this.selectedKey)) this.selectedKey = this.entries[0]?.key;
+		if (!entries.some((entry) => entry.key === this.selectedKey)) this.selectedKey = entries[0]?.key;
 		if (this.shown) return this.tui?.requestRender();
 		this.shown = true;
 		this.ctx.ui.setWidget(
@@ -113,34 +142,38 @@ export class Roster {
 	}
 
 	private handleKey(data: string): { consume: true } | undefined {
-		if (isKeyRelease(data) || this.entries.length === 0) return undefined;
+		if (isKeyRelease(data) || this.entries().length === 0) return undefined;
 		if (!this.editorFocused()) {
-			if (this.active) this.setActive(false);
+			if (this.active) this.closeAndRefresh();
 			return undefined;
 		}
 		const kb = getKeybindings();
 		if (!this.active) {
 			if (!kb.matches(data, "tui.editor.cursorDown") || this.ctx.ui.getEditorText() !== "") return undefined;
-			this.selectedKey = this.entries[0]?.key;
-			this.setActive(true);
+			this.selectedKey = this.entries()[0]?.key;
+			this.active = true;
+			this.tui?.requestRender();
 			return CONSUME;
 		}
+		const entries = this.entries();
 		const index = this.selectedIndex();
 		if (kb.matches(data, "tui.select.down")) {
-			this.select(Math.min(index + 1, this.entries.length - 1));
+			this.select(entries[Math.min(index + 1, entries.length - 1)]);
 		} else if (kb.matches(data, "tui.select.up")) {
 			// Up from the first row hands the keys back to the editor, as if the list were below it.
-			if (index === 0) this.setActive(false);
-			else this.select(index - 1);
+			if (index === 0) this.closeAndRefresh();
+			else this.select(entries[index - 1]);
 		} else if (kb.matches(data, "tui.select.confirm")) {
-			const entry = this.entries[index];
-			this.setActive(false);
-			if (entry) this.open(entry.target);
+			const entry = entries[index];
+			this.closeAndRefresh();
+			if (entry) this.onOpen(entry.target);
+		} else if (kb.matches(data, "tui.input.tab")) {
+			this.toggleScope();
 		} else if (kb.matches(data, "tui.select.cancel")) {
-			this.setActive(false);
+			this.closeAndRefresh();
 		} else {
 			// Typing leaves the list and goes to the editor.
-			this.setActive(false);
+			this.closeAndRefresh();
 			return undefined;
 		}
 		return CONSUME;
@@ -153,20 +186,37 @@ export class Roster {
 		return typeof focused?.getText === "function" && typeof focused.setText === "function";
 	}
 
-	private setActive(active: boolean): void {
-		this.active = active;
-		this.tui?.requestRender();
+	private toggleScope(): void {
+		if (!this.canToggle()) return;
+		this.scope = this.scope === "all" ? "recent" : "all";
+		this.refresh();
 	}
 
-	private select(index: number): void {
-		this.selectedKey = this.entries[index]?.key;
+	// "all" needs older children to add anything; "recent" needs at least one row to show.
+	private canToggle(): boolean {
+		return this.scope === "recent" ? this.all.length > this.recent.length : this.recent.length > 0;
+	}
+
+	private close(): void {
+		this.active = false;
+		this.scope = "recent";
+	}
+
+	// Closing can hide rows ("all" back to "recent"), so the widget is recomputed.
+	private closeAndRefresh(): void {
+		this.close();
+		this.refresh();
+	}
+
+	private select(entry: RosterEntry | undefined): void {
+		this.selectedKey = entry?.key;
 		this.tui?.requestRender();
 	}
 
 	private selectedIndex(): number {
 		return Math.max(
 			0,
-			this.entries.findIndex((entry) => entry.key === this.selectedKey),
+			this.entries().findIndex((entry) => entry.key === this.selectedKey),
 		);
 	}
 
@@ -176,21 +226,25 @@ export class Roster {
 	}
 
 	private render(width: number, theme: Theme): string[] {
-		if (this.entries.length === 0) return [];
+		const entries = this.entries();
+		if (entries.length === 0) return [];
 		if (!this.active) {
-			return [truncateToWidth(`  ${summary(this.entries, theme)} ${theme.fg("dim", "·")} ${shortKeyHint("tui.editor.cursorDown", "to open", theme)}`, width)];
+			return [truncateToWidth(`  ${summary(entries, theme)} ${theme.fg("dim", "·")} ${shortKeyHint("tui.editor.cursorDown", "to open", theme)}`, width)];
 		}
 		const index = this.selectedIndex();
 		const start = index < MAX_ROWS ? 0 : index - MAX_ROWS + 1;
-		const visible = this.entries.slice(start, start + MAX_ROWS);
+		const visible = entries.slice(start, start + MAX_ROWS);
 		const now = Date.now();
 		// Column widths come from every entry, not just the visible ones, so scrolling never shifts them.
-		const table = this.entries.map((entry) => cells(entry, this.taskOf(entry.child), now));
+		const table = entries.map((entry) => cells(entry, this.taskOf(entry.child), now));
 		const widths = columnWidths(table, width);
 		const rows = visible.map((_entry, offset) => row(table[start + offset] as Cells, start + offset === index, widths, width, theme));
-		const hidden = this.entries.length - visible.length;
+		const hidden = entries.length - visible.length;
+		const older = this.all.length - this.recent.length;
+		const toggle = this.scope === "all" ? "recent only" : `${older} older`;
 		const hints = [
 			shortKeyHint("tui.select.confirm", "open", theme),
+			...(this.canToggle() ? [shortKeyHint("tui.input.tab", toggle, theme)] : []),
 			shortKeyHint("tui.select.cancel", "back", theme),
 			...(hidden > 0 ? [theme.fg("dim", `${hidden} more`)] : []),
 		];

@@ -5,12 +5,11 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { fleetViewEnabled, loadConfig } from "./config.ts";
 import { type Registration, registerInspector } from "./inspector.ts";
 import { publishLiveStream } from "./live-stream.ts";
-import { pickChild } from "./picker.ts";
 import { Roster } from "./roster.ts";
 import { defaultRunsRoot, SessionRuns } from "./run-status.ts";
 import { openView } from "./view.ts";
 
-/** Extension factory: the live-stream publisher in subagents; inspector, picker shortcut and /attach in parents. */
+/** Extension factory: the live-stream publisher in subagents; inspector, subagent list, shortcut and /attach in parents. */
 export default function (pi: ExtensionAPI) {
 	// Global extensions also load inside every subagent: there, the only job is serving the live stream.
 	if (process.env.PI_SUBAGENT_CHILD === "1") return publishLiveStream(pi);
@@ -39,21 +38,25 @@ export default function (pi: ExtensionAPI) {
 		current = undefined;
 	});
 
-	const openPicked = async (ctx: ExtensionContext) => {
-		const target = await pickChild(ctx);
-		if (target) await openView(target, pi.events, ctx);
+	const showList = (ctx: ExtensionContext) => {
+		if (roster) return roster.show();
+		if (fleetViewEnabled()) {
+			const config = "~/.pi/agent/extensions/subagent/config.json";
+			return ctx.ui.notify(`pi-attach's list is off while pi-subagents' FleetView is on: set "fleetView": false in ${config}.`, "info");
+		}
+		ctx.ui.notify("This session is not saved, so its subagent runs cannot be found.", "warning");
 	};
 
-	const { pickerShortcut } = loadConfig();
-	if (pickerShortcut) {
-		pi.registerShortcut(pickerShortcut, { description: "Open a subagent in this window", handler: openPicked });
+	const { listShortcut } = loadConfig();
+	if (listShortcut) {
+		pi.registerShortcut(listShortcut, { description: "Show this session's subagents", handler: showList });
 	}
 
 	pi.registerCommand("attach", {
-		description: "Open a subagent in this window: /attach [async run dir] [child index]",
+		description: "Show this session's subagents, or open one: /attach [async run dir] [child index]",
 		handler: async (args, ctx) => {
 			const [path, indexArg] = args.trim().split(/\s+/).filter(Boolean);
-			if (!path) return openPicked(ctx);
+			if (!path) return showList(ctx);
 			if (!existsSync(path)) return ctx.ui.notify(`No such async run directory: ${path}`, "error");
 			const asyncDir = resolve(path);
 			// pi-subagents names each async run directory after its run id.

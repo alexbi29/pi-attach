@@ -6,8 +6,8 @@ import type { KeyId } from "@earendil-works/pi-tui";
 
 /** Settings the extension reads once at load. */
 export interface Config {
-	/** Key that opens the child picker; `false` registers none. */
-	pickerShortcut: KeyId | false;
+	/** Key that opens the subagent list from anywhere; `false` registers none. */
+	listShortcut: KeyId | false;
 }
 
 /** Defaults merged with the user's config file; a missing or broken file yields the defaults. */
@@ -20,9 +20,9 @@ export function loadConfig(): Config {
 		return DEFAULTS;
 	}
 	// User-edited JSON: accept only the documented key types.
-	const shortcut = (raw as { pickerShortcut?: unknown } | null)?.pickerShortcut;
+	const shortcut = (raw as { listShortcut?: unknown } | null)?.listShortcut;
 	return {
-		pickerShortcut: typeof shortcut === "string" || shortcut === false ? (shortcut as KeyId | false) : DEFAULTS.pickerShortcut,
+		listShortcut: typeof shortcut === "string" || shortcut === false ? (shortcut as KeyId | false) : DEFAULTS.listShortcut,
 	};
 }
 
@@ -42,4 +42,4 @@ export function fleetViewEnabled(): boolean {
 
 // Unbound in pi's default keymap. Not alt+a: macOS terminals type "å" for Option+A unless Option is set to send Meta.
 // Ctrl+Shift needs a terminal that reports it (kitty keyboard protocol or modifyOtherKeys), as pi's own ctrl+shift keys do.
-const DEFAULTS: Config = { pickerShortcut: "ctrl+shift+a" };
+const DEFAULTS: Config = { listShortcut: "ctrl+shift+a" };

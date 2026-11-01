@@ -54,11 +54,6 @@ export function readRunStatus(asyncDir: string, runId: string): RunStatus | unde
 	};
 }
 
-/** Async runs started from `parentSession`, newest first. */
-export function listSessionRuns(parentSession: string, runsRoot: string): RunStatus[] {
-	return new SessionRuns(parentSession, runsRoot).list().sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
-}
-
 /**
  * Follows one parent session's async runs. Polled every second, so a run's status.json is read again
  * only while the run is in flight: a finished run never changes (resume starts a new run).

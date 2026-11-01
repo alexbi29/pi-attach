@@ -26,17 +26,17 @@ While this session has subagents running, or finished in the last ten minutes, o
   2 running · 1 done · ↓ to open
 ```
 
-`↓` on an empty editor opens the list, `↑↓` select, Enter opens the child, Esc (or `↑` from the first row, or typing) goes back to the editor:
+`↓` on an empty editor opens the list, `↑↓` select, Enter opens the child, Tab shows older children (and Tab again hides them), Esc (or `↑` from the first row, or typing) goes back to the editor:
 
 ```
   › delegate  Run the test suite and report failures  running  1m 20s   24.4k / 262k ctx
     reviewer  Review the diff in src/                 done        42s  210.5k / 262k ctx
-    enter open · esc back
+    enter open · tab 3 older · esc back
 ```
 
 Other ways in:
 
-- `ctrl+shift+a` or `/attach`: pick any of this session's subagents, newest first, including older ones.
+- `ctrl+shift+a` or `/attach` opens the same list from anywhere, even with text in the editor. When no child is recent, it opens on all of them.
 - `/subagents-fleet`: select a running child and press Enter. Inside tmux, pi-subagents' own tmux inspector takes that Enter.
 - `/attach <async run dir> [child index]` opens a run directly.
 
@@ -60,10 +60,10 @@ Keys follow your `~/.pi/agent/keybindings.json`.
 `~/.pi/agent/extensions/pi-attach/config.json`, all keys optional:
 
 ```json
-{ "pickerShortcut": "ctrl+shift+a" }
+{ "listShortcut": "ctrl+shift+a" }
 ```
 
-`pickerShortcut` is the key that opens the picker; `false` registers none. Ctrl+Shift combinations need a terminal that reports them (most modern terminals, including iTerm2, Ghostty, kitty and WezTerm); `/attach` works everywhere. Restart pi or run `/reload` after changing it.
+`listShortcut` is the key that opens the list; `false` registers none. Ctrl+Shift combinations need a terminal that reports them (most modern terminals, including iTerm2, Ghostty, kitty and WezTerm); `/attach` works everywhere. Restart pi or run `/reload` after changing it.
 
 ## How it works
 

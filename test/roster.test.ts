@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { Roster, rosterEntries } from "../src/roster.ts";
+import { isRecent, Roster, rosterEntries } from "../src/roster.ts";
 import type { ChildStatus, RunStatus, SessionRuns } from "../src/run-status.ts";
 import type { ViewTarget } from "../src/view.ts";
 
@@ -22,41 +22,40 @@ const child = (state: string, startedAt: number, extra: Partial<ChildStatus> = {
 });
 
 describe("rosterEntries", () => {
-	it("lists running children first, then recently finished ones, newest first in each", () => {
-		const entries = rosterEntries(
-			[
-				run("done-new", [child("complete", NOW - 3 * MINUTE, { endedAt: NOW - MINUTE })]),
-				run("run-old", [child("running", NOW - 5 * MINUTE)]),
-				run("run-new", [child("queued", NOW - MINUTE)]),
-				run("done-old", [child("failed", NOW - 9 * MINUTE, { endedAt: NOW - 8 * MINUTE })]),
-			],
-			NOW,
-		);
+	it("lists every started child: active ones first, then the rest, newest first in each", () => {
+		const entries = rosterEntries([
+			run("done-new", [child("complete", NOW - 3 * MINUTE, { endedAt: NOW - MINUTE })]),
+			run("run-old", [child("running", NOW - 5 * MINUTE)]),
+			run("run-new", [child("queued", NOW - MINUTE)]),
+			run("done-old", [child("failed", NOW - 90 * MINUTE, { endedAt: NOW - 80 * MINUTE })]),
+			run("workflow", [child("pending", NOW)]),
+		]);
 		assert.deepEqual(
 			entries.map((entry) => entry.target.runId),
 			["run-new", "run-old", "done-new", "done-old"],
 		);
 	});
 
-	it("drops children that ended more than ten minutes ago and children that have not started", () => {
-		const entries = rosterEntries(
-			[
-				run("stale", [child("complete", NOW - 20 * MINUTE, { endedAt: NOW - 11 * MINUTE })]),
-				run("workflow", [child("running", NOW - MINUTE), child("pending", NOW)]),
-			],
-			NOW,
-		);
-		assert.deepEqual(
-			entries.map((entry) => entry.key),
-			["workflow:0"],
-		);
-	});
-
 	it("numbers the children of a multi-step run and targets each by index", () => {
-		const [first, second] = rosterEntries([run("wf", [child("running", NOW - 2), child("running", NOW - 1)])], NOW);
+		const [first, second] = rosterEntries([run("wf", [child("running", NOW - 2), child("running", NOW - 1)])]);
 		assert.deepEqual(second?.target, { runId: "wf", asyncDir: "/runs/wf", index: 0 });
 		assert.equal(second?.step, "1/2");
 		assert.equal(first?.step, "2/2");
+	});
+});
+
+describe("isRecent", () => {
+	it("keeps active children and ones that ended in the last ten minutes", () => {
+		const entries = rosterEntries([
+			run("running", [child("running", NOW - 3)]),
+			run("fresh", [child("complete", NOW - 2, { endedAt: NOW - 9 * MINUTE })]),
+			run("stale", [child("paused", NOW - 1, { endedAt: NOW - 11 * MINUTE })]),
+		]);
+		assert.deepEqual(Object.fromEntries(entries.map((entry) => [entry.target.runId, isRecent(entry, NOW)])), {
+			running: true,
+			fresh: true,
+			stale: false,
+		});
 	});
 });
 
@@ -66,6 +65,7 @@ function harness(runs: RunStatus[]) {
 	let widget: Component | undefined;
 	let editorText = "";
 	const opened: ViewTarget[] = [];
+	const notices: string[] = [];
 	const editor = { getText: () => editorText, setText: () => {} };
 	const tui = { focusedComponent: editor as object, requestRender: () => {} };
 	const ctx = {
@@ -80,12 +80,14 @@ function harness(runs: RunStatus[]) {
 				widget = factory?.(tui as unknown as TUI, plainTheme);
 			},
 			getEditorText: () => editorText,
+			notify: (message: string) => notices.push(message),
 		},
 	} as unknown as ExtensionContext;
 	const roster = new Roster({ list: () => runs } as unknown as SessionRuns, (target) => opened.push(target), ctx);
 	return {
 		roster,
 		opened,
+		notices,
 		tui,
 		press: (key: string) => onInput?.(key)?.consume === true,
 		lines: () => (widget?.render(120) ?? []).map((line) => line.trimEnd()),
@@ -102,6 +104,7 @@ const DOWN = "\x1b[B";
 const UP = "\x1b[A";
 const ENTER = "\r";
 const ESC = "\x1b";
+const TAB = "\t";
 
 describe("Roster", () => {
 	const twoChildren = () => [
@@ -166,6 +169,47 @@ describe("Roster", () => {
 		const ui = harness(twoChildren());
 		ui.tui.focusedComponent = { render: () => [] };
 		assert.equal(ui.press(DOWN), false);
+		ui.roster.dispose();
+	});
+
+	it("shows older children on Tab and only recent ones again on a second Tab", () => {
+		const now = Date.now();
+		const ui = harness([
+			run("new", [child("running", now - 1000, { task: "new task" })]),
+			run("old", [child("complete", now - 3 * 60 * MINUTE, { task: "old task", endedAt: now - 2 * 60 * MINUTE })]),
+		]);
+		ui.press(DOWN);
+		assert.equal(ui.lines().length, 2);
+		assert.equal(ui.lines()[1], "    enter open · tab 1 older · esc back");
+		ui.press(TAB);
+		assert.equal(ui.lines().length, 3);
+		assert.match(ui.lines()[1] ?? "", /old task/);
+		assert.equal(ui.lines()[2], "    enter open · tab recent only · esc back");
+		ui.press(TAB);
+		assert.equal(ui.lines().length, 2);
+		ui.roster.dispose();
+	});
+
+	it("opens on all children from the shortcut when none is recent, and closes back to nothing", () => {
+		const now = Date.now();
+		const ui = harness([run("old", [child("complete", now - 3 * 60 * MINUTE, { task: "old task", endedAt: now - 2 * 60 * MINUTE })])]);
+		assert.deepEqual(ui.lines(), []);
+		ui.type("half-typed message");
+		ui.roster.show();
+		assert.match(ui.lines()[0] ?? "", /^ {2}› delegate {2}old task/);
+		// Nothing is recent, so there is no "recent only" to switch to.
+		assert.equal(ui.lines()[1], "    enter open · esc back");
+		assert.equal(ui.press(TAB), true);
+		assert.equal(ui.lines().length, 2);
+		assert.equal(ui.press(ESC), true);
+		assert.deepEqual(ui.lines(), []);
+		ui.roster.dispose();
+	});
+
+	it("tells the user when the session has no subagents yet", () => {
+		const ui = harness([]);
+		ui.roster.show();
+		assert.deepEqual(ui.notices, ["No subagent runs in this session yet."]);
 		ui.roster.dispose();
 	});
 });
