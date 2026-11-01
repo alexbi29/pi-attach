@@ -1,5 +1,5 @@
 // Text shared by the view and the inline list: token counts, durations, states, key hints and split lines.
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, type Keybinding, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 /** Token counts as pi's footer writes them: 950, 3.6k, 24k, 262k, 1.2M, 12M. */
@@ -14,6 +14,12 @@ export function formatTokens(count: number): string {
 /** "24k / 262k ctx": tokens in the context window out of its size; just "24k ctx" when the size is unknown. */
 export function formatContext(context: number, limit: number | undefined): string {
 	return limit === undefined ? `${formatTokens(context)} ctx` : `${formatTokens(context)} / ${formatTokens(limit)} ctx`;
+}
+
+/** pi's footer colors for context use: `normal` up to 70%, warning above, error above 90%. */
+export function contextColor(context: number, limit: number | undefined, normal: ThemeColor): ThemeColor {
+	const percent = limit ? (context / limit) * 100 : 0;
+	return percent > 90 ? "error" : percent > 70 ? "warning" : normal;
 }
 
 /** 42_000 → "42s", 80_000 → "1m 20s". */

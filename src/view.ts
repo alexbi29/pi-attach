@@ -19,7 +19,7 @@ import {
 import { type FSWatcher, watch } from "node:fs";
 import { dirname, join } from "node:path";
 import type { MainActivity } from "./main-activity.ts";
-import { formatDuration, formatTokens, shortKeyHint, spread, stateColor, stateLabel } from "./format.ts";
+import { contextColor, formatDuration, formatTokens, shortKeyHint, spread, stateColor, stateLabel } from "./format.ts";
 import { connectLiveStream, type LiveStreamConnection, type StreamFrame } from "./live-stream.ts";
 import { interrupt, resume, steer } from "./rpc.ts";
 import { type ChildStatus, type RunStatus, readRunStatus } from "./run-status.ts";
@@ -380,10 +380,8 @@ class ChildView implements Component, Focusable {
 	}
 }
 
-// "9.3%/262k", colored as pi colors its own context use: warning above 70%, error above 90%.
+// "9.3%/262k", colored as pi's footer colors its own context use.
 function contextUsage(context: number, limit: number | undefined, theme: Theme): string {
 	if (!limit) return theme.fg("dim", formatTokens(context));
-	const percent = (context / limit) * 100;
-	const text = `${percent.toFixed(1)}%/${formatTokens(limit)}`;
-	return theme.fg(percent > 90 ? "error" : percent > 70 ? "warning" : "dim", text);
+	return theme.fg(contextColor(context, limit, "dim"), `${((context / limit) * 100).toFixed(1)}%/${formatTokens(limit)}`);
 }

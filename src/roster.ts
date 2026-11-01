@@ -1,7 +1,7 @@
 // Inline list of this session's subagents under the editor: ↓ on an empty editor or the shortcut opens it, Enter opens a child.
-import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { type Editor, getKeybindings, isKeyRelease, type TUI, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { formatContext, formatDuration, shortKeyHint, stateColor, stateLabel } from "./format.ts";
+import { contextColor, formatContext, formatDuration, shortKeyHint, stateColor, stateLabel } from "./format.ts";
 import type { ChildStatus, RunStatus, SessionRuns } from "./run-status.ts";
 import { readTask } from "./task.ts";
 import type { ViewTarget } from "./view.ts";
@@ -282,6 +282,7 @@ interface Cells {
 	state: string;
 	elapsed: string;
 	context: string;
+	contextColor: ThemeColor;
 }
 
 function cells(entry: RosterEntry, task: string, now: number): Cells {
@@ -295,15 +296,16 @@ function cells(entry: RosterEntry, task: string, now: number): Cells {
 		state: stateLabel(child.state, child.waiting),
 		elapsed: child.startedAt === undefined ? "" : formatDuration(end - child.startedAt),
 		context: child.context === undefined ? "" : formatContext(child.context, child.contextLimit),
+		contextColor: contextColor(child.context ?? 0, child.contextLimit, "text"),
 	};
 }
 
-type Widths = Record<keyof Cells, number>;
+type Widths = Record<Exclude<keyof Cells, "contextColor">, number>;
 
 // Every column as wide as its widest cell, except the task: it takes the rest of the width, so the last
 // column ends at the terminal's edge, where pi's footer puts the model.
 function columnWidths(table: Cells[], width: number): Widths {
-	const widest = (key: keyof Cells) => Math.max(0, ...table.map((cells) => visibleWidth(cells[key])));
+	const widest = (key: keyof Widths) => Math.max(0, ...table.map((cells) => visibleWidth(cells[key])));
 	const widths = {
 		name: widest("name"),
 		task: 0,
@@ -325,8 +327,9 @@ function row(cells: Cells, selected: boolean, widths: Widths, width: number, the
 		[widths.task, theme.fg("muted", pad(truncateToWidth(cells.task, Math.max(0, widths.task - TASK_MARGIN), "…"), widths.task))],
 		[widths.model, theme.fg("dim", pad(cells.model, widths.model))],
 		[widths.state, stateColor(cells.state, theme)(pad(cells.state, widths.state))],
-		[widths.elapsed, theme.fg("dim", padStart(cells.elapsed, widths.elapsed))],
-		[widths.context, theme.fg("dim", padStart(cells.context, widths.context))],
+		// Each column its own tone: time in a quiet blue, context in plain text unless it is filling up.
+		[widths.elapsed, theme.fg("mdLink", padStart(cells.elapsed, widths.elapsed))],
+		[widths.context, theme.fg(cells.contextColor, padStart(cells.context, widths.context))],
 	];
 	// A column empty in every row (no model known, say) is left out with its gap.
 	const shown = columns.filter(([columnWidth]) => columnWidth > 0).map(([, text]) => text);
