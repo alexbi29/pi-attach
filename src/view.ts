@@ -3,6 +3,7 @@ import {
 	type EventBus,
 	type ExtensionContext,
 	getSelectListTheme,
+	SettingsManager,
 	type KeybindingsManager,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
@@ -35,8 +36,14 @@ export interface ViewTarget {
 
 /** Show `target` over the main chat until the user closes it; resolves on close. */
 export async function openView(target: ViewTarget, events: EventBus, main: MainActivity, ctx: ExtensionContext): Promise<void> {
+	// Start as the main chat shows things. pi saves its thinking toggle to settings on every press, so the file
+	// is current; toggles inside the view stay in the view.
+	const display: TranscriptDisplay = {
+		toolsExpanded: ctx.ui.getToolsExpanded(),
+		hideThinking: SettingsManager.create(ctx.cwd).getHideThinkingBlock(),
+	};
 	await ctx.ui.custom<void>(
-		(tui, theme, keybindings, done) => new ChildView(tui, theme, keybindings, target, events, main, ctx.cwd, done),
+		(tui, theme, keybindings, done) => new ChildView(tui, theme, keybindings, target, events, main, display, ctx.cwd, done),
 		// Covers the whole terminal so the child reads like the main chat, not a dialog.
 		{ overlay: true, overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%", margin: 0 } },
 	);
@@ -62,7 +69,7 @@ class ChildView implements Component, Focusable {
 	private readonly done: () => void;
 	private readonly main: MainActivity;
 	private readonly stopMain: () => void;
-	private readonly display: TranscriptDisplay = { toolsExpanded: false, hideThinking: false };
+	private readonly display: TranscriptDisplay;
 	private readonly transcript: Transcript;
 	private readonly editor: Editor;
 	private run: RunStatus | undefined;
@@ -88,6 +95,7 @@ class ChildView implements Component, Focusable {
 		target: ViewTarget,
 		events: EventBus,
 		main: MainActivity,
+		display: TranscriptDisplay,
 		cwd: string,
 		done: () => void,
 	) {
@@ -98,6 +106,7 @@ class ChildView implements Component, Focusable {
 		this.events = events;
 		this.done = done;
 		this.main = main;
+		this.display = display;
 		main.markSeen();
 		this.stopMain = main.onChange(() => tui.requestRender());
 		this.transcript = new Transcript(tui, cwd, this.display);
