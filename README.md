@@ -40,7 +40,7 @@ Other ways in:
 - `/subagents-fleet`: select a running child and press Enter. Inside tmux, pi-subagents' own tmux inspector takes that Enter.
 - `/attach <async run dir> [child index]` opens a run directly.
 
-The view follows the child live: text and thinking stream token by token, running tools show their output as it arrives, and the header shows agent, state, tool count and elapsed time, and the bottom line is pi's own stats line for the child: tokens in and out, context use, and `(provider) model • thinking`. Scrolled-up content stays in place while new output arrives; sending a message jumps back to the end.
+The view follows the child live: text and thinking stream token by token, running tools show their output as it arrives, and the header shows the agent, its run id and task, tool count and elapsed time; the row under the editor says which subagent you are talking to and its state; and the bottom line is pi's own stats line for the child: tokens in and out, context use, and `(provider) model • thinking`. Scrolled-up content stays in place while new output arrives; sending a message jumps back to the end.
 
 In the view:
 
@@ -51,7 +51,7 @@ In the view:
 | Ctrl+O (`app.tools.expand`) | Expand or collapse tool output |
 | `app.thinking.toggle` | Show or hide thinking |
 | PageUp/PageDown, wheel | Scroll |
-| Esc (`app.interrupt`), Ctrl+D (`app.exit`, empty editor) | Close the view; the child keeps running |
+| Esc (`app.interrupt`), Ctrl+D (`app.exit`, empty editor) | Back to the main session; the child keeps running |
 
 Keys follow your `~/.pi/agent/keybindings.json`.
 

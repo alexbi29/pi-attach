@@ -1,7 +1,7 @@
 // Inline list of this session's subagents under the editor: ↓ on an empty editor or the shortcut opens it, Enter opens a child.
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { type Editor, getKeybindings, isKeyRelease, type TUI, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { formatContext, formatDuration, shortKeyHint } from "./format.ts";
+import { formatContext, formatDuration, shortKeyHint, stateColor, stateLabel } from "./format.ts";
 import type { ChildStatus, RunStatus, SessionRuns } from "./run-status.ts";
 import { readTask } from "./task.ts";
 import type { ViewTarget } from "./view.ts";
@@ -342,16 +342,4 @@ function pad(text: string, width: number): string {
 
 function padStart(text: string, width: number): string {
 	return " ".repeat(Math.max(0, width - visibleWidth(text))) + text;
-}
-
-function stateLabel(state: string): string {
-	if (state === "queued") return "running";
-	if (state === "complete" || state === "completed") return "done";
-	if (state === "error") return "failed";
-	return state;
-}
-
-function stateColor(label: string, theme: Theme): (text: string) => string {
-	const color = label === "running" ? "accent" : label === "done" ? "success" : label === "failed" ? "error" : "warning";
-	return (text) => theme.fg(color, text);
 }

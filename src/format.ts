@@ -1,6 +1,6 @@
-// Compact text shared by the view and the inline list: token counts, durations and key hints.
+// Text shared by the view and the inline list: token counts, durations, states, key hints and split lines.
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { getKeybindings, type Keybinding } from "@earendil-works/pi-tui";
+import { getKeybindings, type Keybinding, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 /** Token counts as pi's footer writes them: 950, 3.6k, 24k, 262k, 1.2M, 12M. */
 export function formatTokens(count: number): string {
@@ -29,3 +29,25 @@ export function shortKeyHint(keybinding: Keybinding, description: string, theme:
 }
 
 const KEY_NAMES: Record<string, string> = { escape: "esc", up: "↑", down: "↓", left: "←", right: "→" };
+
+/** `left` and `right` on one line, `right` flush with the edge; when both do not fit, `right` gives way first. */
+export function spread(left: string, right: string, width: number): string {
+	const leftText = truncateToWidth(left, width, "…");
+	// pi's footer keeps at least two columns between its halves.
+	const rightText = truncateToWidth(right, Math.max(0, width - visibleWidth(leftText) - 2), "");
+	return leftText + " ".repeat(Math.max(0, width - visibleWidth(leftText) - visibleWidth(rightText))) + rightText;
+}
+
+/** pi-subagents' state as the list and the view name it: "queued" counts as running, "complete" reads "done". */
+export function stateLabel(state: string): string {
+	if (state === "queued") return "running";
+	if (state === "complete" || state === "completed") return "done";
+	if (state === "error") return "failed";
+	return state;
+}
+
+/** The color for a `stateLabel`: running accent, done success, failed error, anything else (paused, stopped) warning. */
+export function stateColor(label: string, theme: Theme): (text: string) => string {
+	const color = label === "running" ? "accent" : label === "done" ? "success" : label === "failed" ? "error" : "warning";
+	return (text) => theme.fg(color, text);
+}

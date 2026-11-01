@@ -18,10 +18,11 @@ import {
 } from "@earendil-works/pi-tui";
 import { type FSWatcher, watch } from "node:fs";
 import { dirname, join } from "node:path";
-import { formatDuration, formatTokens, shortKeyHint } from "./format.ts";
+import { formatDuration, formatTokens, shortKeyHint, spread, stateColor, stateLabel } from "./format.ts";
 import { connectLiveStream, type LiveStreamConnection, type StreamFrame } from "./live-stream.ts";
 import { interrupt, resume, steer } from "./rpc.ts";
 import { type ChildStatus, type RunStatus, readRunStatus } from "./run-status.ts";
+import { readTask } from "./task.ts";
 import { Transcript, type TranscriptDisplay } from "./transcript.ts";
 
 /** One child of an async run: the run's id and directory plus the child's index in it. */
@@ -73,6 +74,8 @@ class ChildView implements Component, Focusable {
 	private transcriptRows = 0;
 	private lastBodyLength = 0;
 	private status = "";
+	// The child's task line for the header; read from its session file once the task is written.
+	private task: string | undefined;
 	private focusedValue = false;
 
 	constructor(
@@ -199,6 +202,10 @@ class ChildView implements Component, Focusable {
 			} else {
 				changed = this.transcript.refresh() || changed;
 			}
+			if (!this.task && this.watchedSessionFile) {
+				this.task = readTask(this.watchedSessionFile);
+				changed = changed || this.task !== undefined;
+			}
 		} catch (error) {
 			this.status = `Cannot read ${sessionFile}: ${error instanceof Error ? error.message : String(error)}`;
 			changed = true;
@@ -309,52 +316,57 @@ class ChildView implements Component, Focusable {
 		this.tui.requestRender();
 	}
 
+	// The title: which child this is and what it was asked to do, with its progress on the right.
 	private renderHeader(width: number): string {
+		const theme = this.theme;
 		const child = this.child;
-		const name = `${child?.agent ?? "subagent"} · ${this.target.runId.slice(0, 8)}`;
+		const task = this.task ?? child?.task;
+		const left = `${theme.fg("accent", theme.bold(child?.agent ?? "subagent"))} ${theme.fg("dim", this.target.runId.slice(0, 8))}${task ? `  ${theme.fg("muted", task)}` : ""}`;
 		const facts = [
-			child?.state ?? this.run?.state ?? "starting",
 			child?.toolCount === undefined ? undefined : `${child.toolCount} tools`,
 			this.run?.startedAt === undefined ? undefined : formatDuration((this.run.endedAt ?? Date.now()) - this.run.startedAt),
 			this.scrollFromEnd > 0 ? `↑${this.scrollFromEnd}` : undefined,
 		].filter((fact) => fact !== undefined);
-		return truncateToWidth(`${this.theme.fg("accent", this.theme.bold(name))} ${this.theme.fg("dim", facts.join(" · "))}`, width);
+		return spread(left, theme.fg("dim", facts.join(" · ")), width);
 	}
 
+	// Next to the editor, where the eyes are: whose editor this is, its state and the last reply, then the keys.
 	private renderStatus(width: number): string {
+		const theme = this.theme;
+		const child = this.child;
+		const state = stateLabel(child?.state ?? this.run?.state ?? "starting");
+		const identity = `${theme.fg("accent", "subagent")} ${theme.bold(child?.agent ?? "subagent")} ${theme.fg("dim", "·")} ${stateColor(state, theme)(state)}`;
+		const left = this.status ? `${identity}${theme.fg("dim", ` · ${this.status}`)}` : identity;
 		const hints = [
-			shortKeyHint("tui.input.submit", "send", this.theme),
-			shortKeyHint("app.clear", "interrupt", this.theme),
-			shortKeyHint("app.tools.expand", "tools", this.theme),
-			shortKeyHint("app.interrupt", "close", this.theme),
-		].join(" · ");
-		return truncateToWidth(this.status ? `${this.theme.fg("dim", this.status)} · ${hints}` : hints, width);
+			shortKeyHint("tui.input.submit", "send", theme),
+			shortKeyHint("app.clear", "interrupt", theme),
+			shortKeyHint("app.tools.expand", "tools", theme),
+			shortKeyHint("app.interrupt", "back to main", theme),
+		].join(theme.fg("dim", " · "));
+		return spread(left, hints, width);
 	}
 
 	// pi's own stats line, for the child: "↑194k ↓8.9k 9.3%/262k" left, "(intl) qwen3.8-flash-next • high" right.
 	private renderFooter(width: number): string {
 		const child = this.child;
 		const theme = this.theme;
+		// Each part is dimmed on its own: the colored context share ends in a reset that would end an outer dim.
 		const left = [
-			child?.input ? `↑${formatTokens(child.input)}` : undefined,
-			child?.output ? `↓${formatTokens(child.output)}` : undefined,
+			child?.input ? theme.fg("dim", `↑${formatTokens(child.input)}`) : undefined,
+			child?.output ? theme.fg("dim", `↓${formatTokens(child.output)}`) : undefined,
 			child?.context === undefined ? undefined : contextUsage(child.context, child.contextLimit, theme),
 		].filter((part) => part !== undefined);
 		// The session file knows the level the child runs at now; status.json only what it was launched with.
 		const level = this.transcript.thinkingLevel !== "off" ? this.transcript.thinkingLevel : child?.thinking;
 		const model = child?.model ? `${child.provider ? `(${child.provider}) ` : ""}${child.model}${level ? ` • ${level}` : ""}` : "";
-		const leftText = truncateToWidth(left.join(" "), width, "...");
-		// Same 2-column minimum gap as pi's footer; the model gives way first.
-		const right = truncateToWidth(model, Math.max(0, width - visibleWidth(leftText) - 2), "");
-		const gap = " ".repeat(Math.max(0, width - visibleWidth(leftText) - visibleWidth(right)));
-		return theme.fg("dim", leftText) + theme.fg("dim", gap + right);
+		return spread(left.join(" "), theme.fg("dim", model), width);
 	}
 }
 
 // "9.3%/262k", colored as pi colors its own context use: warning above 70%, error above 90%.
 function contextUsage(context: number, limit: number | undefined, theme: Theme): string {
-	if (!limit) return formatTokens(context);
+	if (!limit) return theme.fg("dim", formatTokens(context));
 	const percent = (context / limit) * 100;
 	const text = `${percent.toFixed(1)}%/${formatTokens(limit)}`;
-	return percent > 90 ? theme.fg("error", text) : percent > 70 ? theme.fg("warning", text) : text;
+	return theme.fg(percent > 90 ? "error" : percent > 70 ? "warning" : "dim", text);
 }
