@@ -26,6 +26,20 @@ export function loadConfig(): Config {
 	};
 }
 
+/**
+ * Whether pi-subagents draws its own inline FleetView. The two lists would both take ↓ under the editor,
+ * so pi-attach shows its list only once `"fleetView": false` is set in pi-subagents' config.
+ */
+export function fleetViewEnabled(): boolean {
+	const path = join(getAgentDir(), "extensions", "subagent", "config.json");
+	try {
+		// pi-subagents' own file: only the documented boolean switch matters here.
+		return (JSON.parse(readFileSync(path, "utf-8")) as { fleetView?: unknown } | null)?.fleetView !== false;
+	} catch {
+		return true;
+	}
+}
+
 // Unbound in pi's default keymap. Not alt+a: macOS terminals type "å" for Option+A unless Option is set to send Meta.
 // Ctrl+Shift needs a terminal that reports it (kitty keyboard protocol or modifyOtherKeys), as pi's own ctrl+shift keys do.
 const DEFAULTS: Config = { pickerShortcut: "ctrl+shift+a" };

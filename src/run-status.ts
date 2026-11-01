@@ -11,6 +11,10 @@ export interface ChildStatus {
 	sessionFile?: string;
 	tokens?: number;
 	toolCount?: number;
+	startedAt?: number;
+	endedAt?: number;
+	/** The start of the child's task, from pi-subagents' session name ("delegate: Run the…"). */
+	task?: string;
 }
 
 /** An async run: its children plus the fields that place it in time and in a parent session. */
@@ -48,17 +52,55 @@ export function readRunStatus(asyncDir: string, runId: string): RunStatus | unde
 
 /** Async runs started from `parentSession`, newest first. */
 export function listSessionRuns(parentSession: string, runsRoot: string): RunStatus[] {
-	let ids: string[];
-	try {
-		ids = readdirSync(runsRoot);
-	} catch {
-		return [];
-	}
-	return ids
-		.map((id) => readRunStatus(join(runsRoot, id), id))
-		.filter((run): run is RunStatus => run?.parentSession === parentSession)
-		.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
+	return new SessionRuns(parentSession, runsRoot).list().sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
 }
+
+/**
+ * Follows one parent session's async runs. Polled every second, so a run's status.json is read again
+ * only while the run is in flight: a finished run never changes (resume starts a new run).
+ */
+export class SessionRuns {
+	private readonly parentSession: string;
+	private readonly runsRoot: string;
+	// Settled run ids: the final status of this session's finished runs, undefined for other sessions' runs.
+	private readonly settled = new Map<string, RunStatus | undefined>();
+
+	constructor(parentSession: string, runsRoot: string) {
+		this.parentSession = parentSession;
+		this.runsRoot = runsRoot;
+	}
+
+	/** This session's runs, in directory order. */
+	list(): RunStatus[] {
+		let ids: string[];
+		try {
+			ids = readdirSync(this.runsRoot);
+		} catch {
+			return [];
+		}
+		const runs: RunStatus[] = [];
+		for (const id of ids) {
+			if (this.settled.has(id)) {
+				const run = this.settled.get(id);
+				if (run) runs.push(run);
+				continue;
+			}
+			// Undefined until the runner has written status.json; try again next time.
+			const run = readRunStatus(join(this.runsRoot, id), id);
+			if (!run) continue;
+			if (run.parentSession !== this.parentSession) {
+				// A status written before its session id is known may still turn out to be ours.
+				if (run.parentSession) this.settled.set(id, undefined);
+				continue;
+			}
+			if (!IN_FLIGHT_STATES.has(run.state)) this.settled.set(id, run);
+			runs.push(run);
+		}
+		return runs;
+	}
+}
+
+const IN_FLIGHT_STATES = new Set(["queued", "pending", "running"]);
 
 /**
  * pi-subagents' runs directory: `<tmpdir>/pi-subagents-<scope>/async-subagent-runs`
@@ -86,7 +128,18 @@ function childStatus(step: Record<string, unknown>): ChildStatus {
 		...optional("sessionFile", text(step.sessionFile)),
 		...optional("tokens", number(tokens.total)),
 		...optional("toolCount", number(step.toolCount)),
+		...optional("startedAt", number(step.startedAt)),
+		...optional("endedAt", number(step.endedAt)),
+		...optional("task", task(step)),
 	};
+}
+
+function task(step: Record<string, unknown>): string | undefined {
+	const name = text(step.sessionName);
+	const agent = text(step.agent);
+	const body = agent && name?.startsWith(`${agent}: `) ? name.slice(agent.length + 2) : name;
+	// Tasks can span lines; the list shows them on one row.
+	return body?.replace(/\s+/g, " ").trim() || undefined;
 }
 
 function record(value: unknown): Record<string, unknown> {

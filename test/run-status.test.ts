@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { listSessionRuns, readRunStatus } from "../src/run-status.ts";
+import { listSessionRuns, readRunStatus, SessionRuns } from "../src/run-status.ts";
 
 function writeRun(root: string, runId: string, status: Record<string, unknown>): string {
 	const dir = join(root, runId);
@@ -84,3 +84,30 @@ describe("listSessionRuns", () => {
 		assert.deepEqual(listSessionRuns("/mine.jsonl", join(tmpdir(), "pi-attach-no-such-dir")), []);
 	});
 });
+
+describe("SessionRuns", () => {
+	it("re-reads in-flight runs and keeps a finished run's last status", () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-attach-test-"));
+		writeRun(root, "live", { state: "running", sessionId: "/mine.jsonl", steps: [] });
+		writeRun(root, "done", { state: "complete", sessionId: "/mine.jsonl", steps: [] });
+		const runs = new SessionRuns("/mine.jsonl", root);
+		assert.deepEqual(states(runs), { done: "complete", live: "running" });
+		writeRun(root, "live", { state: "complete", sessionId: "/mine.jsonl", steps: [] });
+		// A finished run never changes, so a rewrite of its file is not read.
+		writeRun(root, "done", { state: "running", sessionId: "/mine.jsonl", steps: [] });
+		assert.deepEqual(states(runs), { done: "complete", live: "complete" });
+	});
+
+	it("picks up a run whose status was written without its session at first", () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-attach-test-"));
+		writeRun(root, "new", { state: "running", steps: [] });
+		const runs = new SessionRuns("/mine.jsonl", root);
+		assert.deepEqual(states(runs), {});
+		writeRun(root, "new", { state: "running", sessionId: "/mine.jsonl", steps: [] });
+		assert.deepEqual(states(runs), { new: "running" });
+	});
+});
+
+function states(runs: SessionRuns): Record<string, string> {
+	return Object.fromEntries(runs.list().map((run) => [run.runId, run.state]));
+}

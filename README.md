@@ -10,15 +10,35 @@ Status: early. Async (background) children only.
 pi install git:github.com/alexbi29/pi-attach
 ```
 
-Requires pi-subagents to be installed.
+Requires pi-subagents to be installed. To use pi-attach's list under the editor in place of pi-subagents' FleetView, turn FleetView off in `~/.pi/agent/extensions/subagent/config.json` and restart pi:
+
+```json
+{ "fleetView": false }
+```
+
+`/subagents-fleet` keeps working. With FleetView on, pi-attach leaves the space under the editor to it.
 
 ## Use
 
-- `ctrl+shift+a` or `/attach`: pick one of this session's subagents, newest first, running or finished.
-- In FleetView (`/subagents-fleet`, or `↓` on an empty editor and then Enter), select a running child and press Enter.
-- `/attach <async run dir> [child index]` opens a run directly.
+While this session has subagents running, or finished in the last ten minutes, one line under the editor counts them:
 
-Inside tmux, pi-subagents' own tmux inspector takes Fleet's Enter; `ctrl+shift+a` and `/attach` still work.
+```
+  2 running · 1 done · ↓ to open
+```
+
+`↓` on an empty editor opens the list, `↑↓` select, Enter opens the child, Esc (or `↑` from the first row, or typing) goes back to the editor:
+
+```
+  › delegate  Run the test suite and report failures          running · 1m 20s · 3.6k tokens
+    reviewer  Review the diff in src/                            done · 42s · 900 tokens
+    enter open · esc back
+```
+
+Other ways in:
+
+- `ctrl+shift+a` or `/attach`: pick any of this session's subagents, newest first, including older ones.
+- `/subagents-fleet`: select a running child and press Enter. Inside tmux, pi-subagents' own tmux inspector takes that Enter.
+- `/attach <async run dir> [child index]` opens a run directly.
 
 The view follows the child live: text and thinking stream token by token, running tools show their output as it arrives, and the header shows agent, model, state, tokens, tool count and elapsed time. Scrolled-up content stays in place while new output arrives; sending a message jumps back to the end.
 
@@ -47,7 +67,7 @@ Keys follow your `~/.pi/agent/keybindings.json`.
 
 ## How it works
 
-pi-attach registers an inspector plugin through pi-subagents' public `pi-subagents:inspector-register:v1` event and sends steer, interrupt and resume requests through its in-process RPC (`subagents:rpc:v1:*`). The transcript is read from the child's `session.jsonl`.
+The list reads pi-subagents' run records (`<tmpdir>/pi-subagents-<uid>/async-subagent-runs/*/status.json`) once a second, re-reading only runs still in flight. pi-attach registers an inspector plugin through pi-subagents' public `pi-subagents:inspector-register:v1` event and sends steer, interrupt and resume requests through its in-process RPC (`subagents:rpc:v1:*`). The transcript is read from the child's `session.jsonl`.
 
 Streaming needs pi-attach inside the child too. pi-subagents loads your installed extensions into every child by default, and there pi-attach only listens on a local Unix socket (`<tmpdir>/pi-attach-<uid>/`, owner-only) and forwards streaming updates to a connected view. It sends nothing while no view is connected. If you restrict child extensions with `subagents.defaultExtensions`, add pi-attach to `subagents.defaultSubagentOnlyExtensions`; without it the view still updates once per finished message.
 

@@ -3,7 +3,6 @@ import {
 	type EventBus,
 	type ExtensionContext,
 	getSelectListTheme,
-	keyHint,
 	type KeybindingsManager,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
@@ -18,6 +17,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { type FSWatcher, watch } from "node:fs";
 import { dirname, join } from "node:path";
+import { formatCount, formatDuration, shortKeyHint } from "./format.ts";
 import { connectLiveStream, type LiveStreamConnection, type StreamFrame } from "./live-stream.ts";
 import { interrupt, resume, steer } from "./rpc.ts";
 import { type ChildStatus, type RunStatus, readRunStatus } from "./run-status.ts";
@@ -323,20 +323,11 @@ class ChildView implements Component, Focusable {
 
 	private renderStatus(width: number): string {
 		const hints = [
-			keyHint("tui.input.submit", "send"),
-			keyHint("app.clear", "interrupt"),
-			keyHint("app.tools.expand", "tools"),
-			keyHint("app.interrupt", "close"),
+			shortKeyHint("tui.input.submit", "send", this.theme),
+			shortKeyHint("app.clear", "interrupt", this.theme),
+			shortKeyHint("app.tools.expand", "tools", this.theme),
+			shortKeyHint("app.interrupt", "close", this.theme),
 		].join(" · ");
 		return truncateToWidth(this.status ? `${this.theme.fg("dim", this.status)} · ${hints}` : hints, width);
 	}
-}
-
-function formatCount(value: number): string {
-	return value < 1000 ? String(value) : `${(value / 1000).toFixed(1)}k`;
-}
-
-function formatDuration(ms: number): string {
-	const seconds = Math.max(0, Math.round(ms / 1000));
-	return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
