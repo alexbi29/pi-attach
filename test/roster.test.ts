@@ -116,10 +116,25 @@ describe("Roster", () => {
 		assert.equal(ui.press(DOWN), false);
 		ui.type("");
 		assert.equal(ui.press(DOWN), true);
-		const lines = ui.lines();
-		assert.match(lines[0] ?? "", /^ {2}› delegate {2}second task +running · 1s$/);
-		assert.match(lines[1] ?? "", /^ {4}delegate {2}first task +running · 2s$/);
-		assert.equal(lines[2], "    enter open · esc back");
+		assert.deepEqual(ui.lines(), [
+			"  › delegate  second task  running  1s",
+			"    delegate  first task   running  2s",
+			"    enter open · esc back",
+		]);
+		ui.roster.dispose();
+	});
+
+	it("lines up every column across rows", () => {
+		const now = Date.now();
+		const ui = harness([
+			run("a", [child("running", now - 84_000, { agent: "worker", task: "a long task text", tokens: 851_700 })]),
+			run("b", [child("paused", now - 395_000, { agent: "reviewer", task: "short", endedAt: now, tokens: 1_200_000 })]),
+		]);
+		ui.press(DOWN);
+		assert.deepEqual(ui.lines().slice(0, 2), [
+			"  › worker    a long task text  running  1m 24s  851.7k tokens",
+			"    reviewer  short             paused   6m 35s    1.2M tokens",
+		]);
 		ui.roster.dispose();
 	});
 

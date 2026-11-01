@@ -2,6 +2,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
+import { taskLine } from "./task.ts";
 
 /** One child of an async run, as far as the view needs it. */
 export interface ChildStatus {
@@ -138,8 +139,7 @@ function task(step: Record<string, unknown>): string | undefined {
 	const name = text(step.sessionName);
 	const agent = text(step.agent);
 	const body = agent && name?.startsWith(`${agent}: `) ? name.slice(agent.length + 2) : name;
-	// Tasks can span lines; the list shows them on one row.
-	return body?.replace(/\s+/g, " ").trim() || undefined;
+	return body === undefined ? undefined : taskLine(body) || undefined;
 }
 
 function record(value: unknown): Record<string, unknown> {

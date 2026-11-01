@@ -3,6 +3,7 @@ import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { type Editor, getKeybindings, isKeyRelease, type TUI, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { formatCount, formatDuration, shortKeyHint } from "./format.ts";
 import type { ChildStatus, RunStatus, SessionRuns } from "./run-status.ts";
+import { readTask } from "./task.ts";
 import type { ViewTarget } from "./view.ts";
 
 /** One listed child: where to open it and what its row shows. */
@@ -57,6 +58,8 @@ export class Roster {
 	private active = false;
 	private shown = false;
 	private tui: TUI | undefined;
+	// Task lines by session file: a child's task never changes, so its file is read once.
+	private readonly tasks = new Map<string, string>();
 
 	constructor(runs: SessionRuns, open: (target: ViewTarget) => void, ctx: ExtensionContext) {
 		this.runs = runs;
@@ -82,6 +85,11 @@ export class Roster {
 			if (this.shown) this.ctx.ui.setWidget(WIDGET_KEY, undefined);
 			this.shown = false;
 			return;
+		}
+		for (const { child } of this.entries) {
+			if (!child.sessionFile || this.tasks.has(child.sessionFile)) continue;
+			const task = readTask(child.sessionFile);
+			if (task) this.tasks.set(child.sessionFile, task);
 		}
 		if (!this.entries.some((entry) => entry.key === this.selectedKey)) this.selectedKey = this.entries[0]?.key;
 		if (this.shown) return this.tui?.requestRender();
@@ -162,6 +170,11 @@ export class Roster {
 		);
 	}
 
+	// pi-subagents' session name holds only the task's first 60 or so characters; the session file has all of it.
+	private taskOf(child: ChildStatus): string {
+		return (child.sessionFile ? this.tasks.get(child.sessionFile) : undefined) ?? child.task ?? "";
+	}
+
 	private render(width: number, theme: Theme): string[] {
 		if (this.entries.length === 0) return [];
 		if (!this.active) {
@@ -171,7 +184,10 @@ export class Roster {
 		const start = index < MAX_ROWS ? 0 : index - MAX_ROWS + 1;
 		const visible = this.entries.slice(start, start + MAX_ROWS);
 		const now = Date.now();
-		const rows = visible.map((entry, offset) => row(entry, start + offset === index, now, width, theme));
+		// Column widths come from every entry, not just the visible ones, so scrolling never shifts them.
+		const table = this.entries.map((entry) => cells(entry, this.taskOf(entry.child), now));
+		const widths = columnWidths(table, width);
+		const rows = visible.map((_entry, offset) => row(table[start + offset] as Cells, start + offset === index, widths, width, theme));
 		const hidden = this.entries.length - visible.length;
 		const hints = [
 			shortKeyHint("tui.select.confirm", "open", theme),
@@ -201,20 +217,64 @@ function rank(order: string[], label: string): number {
 	return index === -1 ? order.length : index;
 }
 
-// "› delegate  Run the bash command sleep 150…            running · 1m 20s · 3.6k tokens"
-function row(entry: RosterEntry, selected: boolean, now: number, width: number, theme: Theme): string {
+// One row's plain-text cells; `row` pads and colors them.
+interface Cells {
+	name: string;
+	task: string;
+	state: string;
+	elapsed: string;
+	tokens: string;
+}
+
+function cells(entry: RosterEntry, task: string, now: number): Cells {
 	const { child } = entry;
-	const name = selected ? theme.bold(child.agent) : child.agent;
-	const step = entry.step ? theme.fg("dim", ` ${entry.step}`) : "";
-	const task = child.task ? `  ${theme.fg("muted", child.task)}` : "";
-	const left = `  ${selected ? theme.fg("accent", "›") : " "} ${name}${step}${task}`;
-	const label = stateLabel(child.state);
-	const facts = [
-		child.startedAt === undefined ? undefined : formatDuration((isActive(child) ? now : (child.endedAt ?? now)) - child.startedAt),
-		child.tokens === undefined ? undefined : `${formatCount(child.tokens)} tokens`,
-	].filter((fact) => fact !== undefined);
-	const right = [stateColor(label, theme)(label), ...facts.map((fact) => theme.fg("dim", fact))].join(theme.fg("dim", " · "));
-	return rightAlign(left, right, width);
+	const end = isActive(child) ? now : (child.endedAt ?? now);
+	return {
+		name: entry.step ? `${child.agent} ${entry.step}` : child.agent,
+		task,
+		state: stateLabel(child.state),
+		elapsed: child.startedAt === undefined ? "" : formatDuration(end - child.startedAt),
+		tokens: child.tokens === undefined ? "" : `${formatCount(child.tokens)} tokens`,
+	};
+}
+
+type Widths = Record<keyof Cells, number>;
+
+// Every column as wide as its widest cell; only the task column gives way when the terminal is narrow.
+function columnWidths(table: Cells[], width: number): Widths {
+	const widest = (key: keyof Cells) => Math.max(0, ...table.map((cells) => visibleWidth(cells[key])));
+	const widths = { name: widest("name"), task: 0, state: widest("state"), elapsed: widest("elapsed"), tokens: widest("tokens") };
+	const fixed = ROW_INDENT + widths.name + widths.state + widths.elapsed + widths.tokens + 4 * GAP.length;
+	return { ...widths, task: Math.max(0, Math.min(widest("task"), MAX_TASK_WIDTH, width - fixed)) };
+}
+
+// Keeps state, time and tokens next to the task on a wide terminal instead of at its far edge.
+const MAX_TASK_WIDTH = 80;
+
+// "  › delegate  Run the bash command sleep 150…  running  1m 20s  3.6k tokens"
+function row(cells: Cells, selected: boolean, widths: Widths, width: number, theme: Theme): string {
+	const name = pad(cells.name, widths.name);
+	const task = pad(truncateToWidth(cells.task, widths.task, "…"), widths.task);
+	const columns = [
+		`  ${selected ? theme.fg("accent", "›") : " "} ${selected ? theme.bold(name) : name}`,
+		theme.fg("muted", task),
+		stateColor(cells.state, theme)(pad(cells.state, widths.state)),
+		theme.fg("dim", padStart(cells.elapsed, widths.elapsed)),
+		theme.fg("dim", padStart(cells.tokens, widths.tokens)),
+	];
+	return truncateToWidth(columns.join(GAP), width);
+}
+
+// Width of "  › " before the name column.
+const ROW_INDENT = 4;
+const GAP = "  ";
+
+function pad(text: string, width: number): string {
+	return text + " ".repeat(Math.max(0, width - visibleWidth(text)));
+}
+
+function padStart(text: string, width: number): string {
+	return " ".repeat(Math.max(0, width - visibleWidth(text))) + text;
 }
 
 function stateLabel(state: string): string {
@@ -227,11 +287,4 @@ function stateLabel(state: string): string {
 function stateColor(label: string, theme: Theme): (text: string) => string {
 	const color = label === "running" ? "accent" : label === "done" ? "success" : label === "failed" ? "error" : "warning";
 	return (text) => theme.fg(color, text);
-}
-
-function rightAlign(left: string, right: string, width: number): string {
-	const rightWidth = visibleWidth(right);
-	const clamped = truncateToWidth(left, Math.max(0, width - rightWidth - 1));
-	const gap = Math.max(1, width - visibleWidth(clamped) - rightWidth);
-	return truncateToWidth(`${clamped}${" ".repeat(gap)}${right}`, width);
 }
