@@ -10,7 +10,10 @@ export interface ChildStatus {
 	model?: string;
 	state: string;
 	sessionFile?: string;
-	tokens?: number;
+	/** Tokens in the child's context window right now. */
+	context?: number;
+	/** The model's context window size. */
+	contextLimit?: number;
 	toolCount?: number;
 	startedAt?: number;
 	endedAt?: number;
@@ -127,12 +130,19 @@ function childStatus(step: Record<string, unknown>): ChildStatus {
 		state: text(step.status) ?? "unknown",
 		...optional("model", text(step.model)),
 		...optional("sessionFile", text(step.sessionFile)),
-		...optional("tokens", number(tokens.total)),
+		...optional("context", context(tokens)),
+		...optional("contextLimit", number(step.contextLimit)),
 		...optional("toolCount", number(step.toolCount)),
 		...optional("startedAt", number(step.startedAt)),
 		...optional("endedAt", number(step.endedAt)),
 		...optional("task", task(step)),
 	};
+}
+
+// An interrupt zeroes `window`; the peak is then the last real size (higher only after a compaction).
+function context(tokens: Record<string, unknown>): number | undefined {
+	const window = number(tokens.window);
+	return window ? window : (number(tokens.windowPeak) ?? window);
 }
 
 function task(step: Record<string, unknown>): string | undefined {

@@ -17,7 +17,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { type FSWatcher, watch } from "node:fs";
 import { dirname, join } from "node:path";
-import { formatCount, formatDuration, shortKeyHint } from "./format.ts";
+import { formatContext, formatDuration, shortKeyHint } from "./format.ts";
 import { connectLiveStream, type LiveStreamConnection, type StreamFrame } from "./live-stream.ts";
 import { interrupt, resume, steer } from "./rpc.ts";
 import { type ChildStatus, type RunStatus, readRunStatus } from "./run-status.ts";
@@ -313,7 +313,7 @@ class ChildView implements Component, Focusable {
 		const facts = [
 			child?.model,
 			child?.state ?? this.run?.state ?? "starting",
-			child?.tokens === undefined ? undefined : `${formatCount(child.tokens)} tokens`,
+			child?.context === undefined ? undefined : formatContext(child.context, child.contextLimit),
 			child?.toolCount === undefined ? undefined : `${child.toolCount} tools`,
 			this.run?.startedAt === undefined ? undefined : formatDuration((this.run.endedAt ?? Date.now()) - this.run.startedAt),
 			this.scrollFromEnd > 0 ? `↑${this.scrollFromEnd}` : undefined,

@@ -1,11 +1,23 @@
-// Compact text shared by the view and the inline list: counts, durations and key hints.
+// Compact text shared by the view and the inline list: context size, durations and key hints.
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, type Keybinding } from "@earendil-works/pi-tui";
 
-/** 950 → "950", 3600 → "3.6k", 2_400_000 → "2.4M". */
-export function formatCount(value: number): string {
+/** "24.4k / 262k ctx": tokens in the context window out of its size; just "24.4k ctx" when the size is unknown. */
+export function formatContext(context: number, limit: number | undefined): string {
+	return limit === undefined ? `${formatCount(context)} ctx` : `${formatCount(context)} / ${formatLimit(limit)} ctx`;
+}
+
+// 950 → "950", 24_416 → "24.4k", 2_400_000 → "2.4M".
+function formatCount(value: number): string {
 	if (value < 1000) return String(Math.round(value));
 	return value < 1_000_000 ? `${(value / 1000).toFixed(1)}k` : `${(value / 1_000_000).toFixed(1)}M`;
+}
+
+// Window sizes are round numbers in practice: 262_144 → "262k", 1_000_000 → "1M".
+function formatLimit(value: number): string {
+	if (value < 1000) return String(value);
+	if (value < 1_000_000) return `${Math.round(value / 1000)}k`;
+	return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
 }
 
 /** 42_000 → "42s", 80_000 → "1m 20s". */

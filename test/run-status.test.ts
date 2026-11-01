@@ -26,7 +26,8 @@ describe("readRunStatus", () => {
 					status: "running",
 					model: "epyc/flash",
 					sessionFile: "/child.jsonl",
-					tokens: { total: 1234 },
+					tokens: { total: 9999, window: 1234 },
+					contextLimit: 262144,
 					toolCount: 3,
 				},
 			],
@@ -43,7 +44,8 @@ describe("readRunStatus", () => {
 					state: "running",
 					model: "epyc/flash",
 					sessionFile: "/child.jsonl",
-					tokens: 1234,
+					context: 1234,
+					contextLimit: 262144,
 					toolCount: 3,
 				},
 			],
@@ -64,6 +66,12 @@ describe("readRunStatus", () => {
 			state: "unknown",
 			children: [{ agent: "subagent", state: "unknown" }],
 		});
+	});
+
+	it("reports a paused child's context from its peak, since an interrupt zeroes the window", () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-attach-test-"));
+		const dir = writeRun(root, "run-3", { steps: [{ status: "paused", tokens: { window: 0, windowPeak: 35208 } }] });
+		assert.equal(readRunStatus(dir, "run-3")?.children[0]?.context, 35208);
 	});
 });
 

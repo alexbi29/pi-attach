@@ -1,7 +1,7 @@
 // Inline list of this session's subagents under the editor: ↓ on an empty editor enters it, Enter opens one.
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { type Editor, getKeybindings, isKeyRelease, type TUI, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { formatCount, formatDuration, shortKeyHint } from "./format.ts";
+import { formatContext, formatDuration, shortKeyHint } from "./format.ts";
 import type { ChildStatus, RunStatus, SessionRuns } from "./run-status.ts";
 import { readTask } from "./task.ts";
 import type { ViewTarget } from "./view.ts";
@@ -223,7 +223,7 @@ interface Cells {
 	task: string;
 	state: string;
 	elapsed: string;
-	tokens: string;
+	context: string;
 }
 
 function cells(entry: RosterEntry, task: string, now: number): Cells {
@@ -234,7 +234,7 @@ function cells(entry: RosterEntry, task: string, now: number): Cells {
 		task,
 		state: stateLabel(child.state),
 		elapsed: child.startedAt === undefined ? "" : formatDuration(end - child.startedAt),
-		tokens: child.tokens === undefined ? "" : `${formatCount(child.tokens)} tokens`,
+		context: child.context === undefined ? "" : formatContext(child.context, child.contextLimit),
 	};
 }
 
@@ -243,15 +243,15 @@ type Widths = Record<keyof Cells, number>;
 // Every column as wide as its widest cell; only the task column gives way when the terminal is narrow.
 function columnWidths(table: Cells[], width: number): Widths {
 	const widest = (key: keyof Cells) => Math.max(0, ...table.map((cells) => visibleWidth(cells[key])));
-	const widths = { name: widest("name"), task: 0, state: widest("state"), elapsed: widest("elapsed"), tokens: widest("tokens") };
-	const fixed = ROW_INDENT + widths.name + widths.state + widths.elapsed + widths.tokens + 4 * GAP.length;
+	const widths = { name: widest("name"), task: 0, state: widest("state"), elapsed: widest("elapsed"), context: widest("context") };
+	const fixed = ROW_INDENT + widths.name + widths.state + widths.elapsed + widths.context + 4 * GAP.length;
 	return { ...widths, task: Math.max(0, Math.min(widest("task"), MAX_TASK_WIDTH, width - fixed)) };
 }
 
-// Keeps state, time and tokens next to the task on a wide terminal instead of at its far edge.
+// Keeps state, time and context next to the task on a wide terminal instead of at its far edge.
 const MAX_TASK_WIDTH = 80;
 
-// "  › delegate  Run the bash command sleep 150…  running  1m 20s  3.6k tokens"
+// "  › delegate  Run the bash command sleep 150…  running  1m 20s  24.4k / 262k ctx"
 function row(cells: Cells, selected: boolean, widths: Widths, width: number, theme: Theme): string {
 	const name = pad(cells.name, widths.name);
 	const task = pad(truncateToWidth(cells.task, widths.task, "…"), widths.task);
@@ -260,7 +260,7 @@ function row(cells: Cells, selected: boolean, widths: Widths, width: number, the
 		theme.fg("muted", task),
 		stateColor(cells.state, theme)(pad(cells.state, widths.state)),
 		theme.fg("dim", padStart(cells.elapsed, widths.elapsed)),
-		theme.fg("dim", padStart(cells.tokens, widths.tokens)),
+		theme.fg("dim", padStart(cells.context, widths.context)),
 	];
 	return truncateToWidth(columns.join(GAP), width);
 }

@@ -127,13 +127,13 @@ describe("Roster", () => {
 	it("lines up every column across rows", () => {
 		const now = Date.now();
 		const ui = harness([
-			run("a", [child("running", now - 84_000, { agent: "worker", task: "a long task text", tokens: 851_700 })]),
-			run("b", [child("paused", now - 395_000, { agent: "reviewer", task: "short", endedAt: now, tokens: 1_200_000 })]),
+			run("a", [child("running", now - 84_000, { agent: "worker", task: "a long task text", context: 24_416, contextLimit: 262_144 })]),
+			run("b", [child("paused", now - 395_000, { agent: "reviewer", task: "short", endedAt: now, context: 210_488, contextLimit: 1_000_000 })]),
 		]);
 		ui.press(DOWN);
 		assert.deepEqual(ui.lines().slice(0, 2), [
-			"  › worker    a long task text  running  1m 24s  851.7k tokens",
-			"    reviewer  short             paused   6m 35s    1.2M tokens",
+			"  › worker    a long task text  running  1m 24s  24.4k / 262k ctx",
+			"    reviewer  short             paused   6m 35s   210.5k / 1M ctx",
 		]);
 		ui.roster.dispose();
 	});
