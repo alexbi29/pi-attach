@@ -58,7 +58,8 @@ type Scope = "recent" | "all";
 /** The widget and its keys for one session; `dispose` removes both. */
 export class Roster {
 	private readonly runs: SessionRuns;
-	private readonly onOpen: (target: ViewTarget) => void;
+	// Shows the child view; resolves when the user leaves it.
+	private readonly onOpen: (target: ViewTarget) => Promise<void>;
 	private readonly ctx: ExtensionContext;
 	private readonly timer: NodeJS.Timeout;
 	private readonly stopInput: () => void;
@@ -70,10 +71,12 @@ export class Roster {
 	private selectedKey: string | undefined;
 	// True while ↑↓ move the selection instead of the editor cursor.
 	private active = false;
+	// True while a child view this list opened covers the screen; the list waits underneath, still open.
+	private viewing = false;
 	private shown = false;
 	private tui: TUI | undefined;
 
-	constructor(runs: SessionRuns, onOpen: (target: ViewTarget) => void, ctx: ExtensionContext) {
+	constructor(runs: SessionRuns, onOpen: (target: ViewTarget) => Promise<void>, ctx: ExtensionContext) {
 		this.runs = runs;
 		this.onOpen = onOpen;
 		this.ctx = ctx;
@@ -142,7 +145,7 @@ export class Roster {
 	}
 
 	private handleKey(data: string): { consume: true } | undefined {
-		if (isKeyRelease(data) || this.entries().length === 0) return undefined;
+		if (this.viewing || isKeyRelease(data) || this.entries().length === 0) return undefined;
 		if (!this.editorFocused()) {
 			if (this.active) this.closeAndRefresh();
 			return undefined;
@@ -165,8 +168,7 @@ export class Roster {
 			else this.select(entries[index - 1]);
 		} else if (kb.matches(data, "tui.select.confirm")) {
 			const entry = entries[index];
-			this.closeAndRefresh();
-			if (entry) this.onOpen(entry.target);
+			if (entry) void this.view(entry.target);
 		} else if (kb.matches(data, "tui.input.tab")) {
 			this.toggleScope();
 		} else if (kb.matches(data, "tui.select.cancel")) {
@@ -177,6 +179,17 @@ export class Roster {
 			return undefined;
 		}
 		return CONSUME;
+	}
+
+	// Esc in the child view comes back to the same row, the way Esc in a submenu returns to its menu.
+	private async view(target: ViewTarget): Promise<void> {
+		this.viewing = true;
+		try {
+			await this.onOpen(target);
+		} finally {
+			this.viewing = false;
+			this.tui?.requestRender();
+		}
 	}
 
 	// pi-tui keeps the focused component private. The main editor is the focused component with

@@ -26,7 +26,7 @@ While this session has subagents running, or finished in the last ten minutes, o
 2 running · 1 done · ↓ to open
 ```
 
-`↓` on an empty editor opens the list, `↑↓` select, Enter opens the child, Tab shows older children (and Tab again hides them), Esc (or `↑` from the first row, or typing) goes back to the editor:
+`↓` on an empty editor opens the list, `↑↓` select, Enter opens the child (Esc there comes back to the list, on the same row), Tab shows older children (and Tab again hides them), Esc (or `↑` from the first row, or typing) goes back to the editor:
 
 ```
 › delegate  Run the test suite and report failures  deepseek-v4-flash  running  1m 20s   24k / 262k ctx

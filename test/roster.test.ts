@@ -83,10 +83,23 @@ function harness(runs: RunStatus[]) {
 			notify: (message: string) => notices.push(message),
 		},
 	} as unknown as ExtensionContext;
-	const roster = new Roster({ list: () => runs } as unknown as SessionRuns, (target) => opened.push(target), ctx);
+	// The child view stays open until the test calls closeView().
+	let closeView = () => {};
+	const open = (target: ViewTarget) => {
+		opened.push(target);
+		return new Promise<void>((resolve) => {
+			closeView = resolve;
+		});
+	};
+	const roster = new Roster({ list: () => runs } as unknown as SessionRuns, open, ctx);
 	return {
 		roster,
 		opened,
+		// Leave the child view, then let the list notice.
+		closeView: async () => {
+			closeView();
+			await new Promise((resolve) => setImmediate(resolve));
+		},
 		notices,
 		tui,
 		press: (key: string) => onInput?.(key)?.consume === true,
@@ -176,12 +189,17 @@ describe("Roster", () => {
 		ui.roster.dispose();
 	});
 
-	it("opens the selected child on Enter and closes the list", () => {
+	it("opens the selected child on Enter and comes back to the same row when the view closes", async () => {
 		const ui = harness(twoChildren());
 		ui.press(DOWN);
 		ui.press(DOWN);
 		assert.equal(ui.press(ENTER), true);
 		assert.deepEqual(ui.opened, [{ runId: "a", asyncDir: "/runs/a", index: 0 }]);
+		// Keys typed into the view are the view's: the list neither moves nor closes.
+		assert.equal(ui.press(ESC), false);
+		await ui.closeView();
+		assert.match(ui.lines()[1] ?? "", /^› delegate {2}first task/);
+		assert.equal(ui.press(ESC), true);
 		assert.equal(ui.lines().length, 1);
 		ui.roster.dispose();
 	});

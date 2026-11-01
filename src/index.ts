@@ -29,7 +29,7 @@ export default function (pi: ExtensionAPI) {
 		const parentSession = ctx.sessionManager.getSessionFile();
 		roster =
 			ctx.mode === "tui" && parentSession && !fleetViewEnabled()
-				? new Roster(new SessionRuns(parentSession, defaultRunsRoot()), (target) => void openView(target, pi.events, main, ctx), ctx)
+				? new Roster(new SessionRuns(parentSession, defaultRunsRoot()), (target) => openView(target, pi.events, main, ctx), ctx)
 				: undefined;
 	});
 	pi.on("session_shutdown", () => {
