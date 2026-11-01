@@ -29,8 +29,8 @@ While this session has subagents running, or finished in the last ten minutes, o
 `↓` on an empty editor opens the list, `↑↓` select, Enter opens the child, Tab shows older children (and Tab again hides them), Esc (or `↑` from the first row, or typing) goes back to the editor:
 
 ```
-  › delegate  Run the test suite and report failures  running  1m 20s   24.4k / 262k ctx
-    reviewer  Review the diff in src/                 done        42s  210.5k / 262k ctx
+  › delegate  Run the test suite and report failures  deepseek-v4-flash  running  1m 20s   24k / 262k ctx
+    reviewer  Review the diff in src/                 qwen3.8-flash      done        42s  210k / 262k ctx
     enter open · tab 3 older · esc back
 ```
 
@@ -40,7 +40,7 @@ Other ways in:
 - `/subagents-fleet`: select a running child and press Enter. Inside tmux, pi-subagents' own tmux inspector takes that Enter.
 - `/attach <async run dir> [child index]` opens a run directly.
 
-The view follows the child live: text and thinking stream token by token, running tools show their output as it arrives, and the header shows agent, model, state, context size, tool count and elapsed time. Scrolled-up content stays in place while new output arrives; sending a message jumps back to the end.
+The view follows the child live: text and thinking stream token by token, running tools show their output as it arrives, and the header shows agent, state, tool count and elapsed time, and the bottom line is pi's own stats line for the child: tokens in and out, context use, and `(provider) model • thinking`. Scrolled-up content stays in place while new output arrives; sending a message jumps back to the end.
 
 In the view:
 

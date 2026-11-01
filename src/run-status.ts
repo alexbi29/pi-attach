@@ -7,7 +7,14 @@ import { taskLine } from "./task.ts";
 /** One child of an async run, as far as the view needs it. */
 export interface ChildStatus {
 	agent: string;
+	/** Provider and model id, split as pi shows them: "(epyc) deepseek-v4-flash". */
+	provider?: string;
 	model?: string;
+	/** Thinking level the child runs at ("high"); absent when not recorded. */
+	thinking?: string;
+	/** Tokens sent and received over the child's whole session. */
+	input?: number;
+	output?: number;
 	state: string;
 	sessionFile?: string;
 	/** Tokens in the child's context window right now. */
@@ -123,7 +130,10 @@ function childStatus(step: Record<string, unknown>): ChildStatus {
 	return {
 		agent: text(step.agent) ?? "subagent",
 		state: text(step.status) ?? "unknown",
-		...optional("model", text(step.model)),
+		...modelOf(step),
+		...optional("thinking", text(step.thinking)),
+		...optional("input", number(tokens.input)),
+		...optional("output", number(tokens.output)),
 		...optional("sessionFile", text(step.sessionFile)),
 		...optional("context", context(tokens)),
 		...optional("contextLimit", number(step.contextLimit)),
@@ -132,6 +142,18 @@ function childStatus(step: Record<string, unknown>): ChildStatus {
 		...optional("endedAt", number(step.endedAt)),
 		...optional("task", task(step)),
 	};
+}
+
+// `resolvedModel` names what the child actually runs; `model` ("provider/id") is the fallback.
+function modelOf(step: Record<string, unknown>): { provider?: string; model?: string } {
+	const resolved = record(step.resolvedModel);
+	const provider = text(resolved.provider);
+	const id = text(resolved.model);
+	if (provider && id) return { provider, model: id };
+	const model = text(step.model);
+	if (!model) return {};
+	const slash = model.indexOf("/");
+	return slash === -1 ? { model } : { provider: model.slice(0, slash), model: model.slice(slash + 1) };
 }
 
 // An interrupt zeroes `window`; the peak is then the last real size (higher only after a compaction).

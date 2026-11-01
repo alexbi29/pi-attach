@@ -25,10 +25,13 @@ describe("readRunStatus", () => {
 					agent: "delegate",
 					status: "running",
 					model: "epyc/flash",
+					thinking: "high",
 					sessionFile: "/child.jsonl",
-					tokens: { total: 9999, window: 1234 },
+					sessionName: "delegate: [Read from: plan.md] Run the   tests",
+					tokens: { input: 9000, output: 999, total: 9999, window: 1234 },
 					contextLimit: 262144,
 					toolCount: 3,
+					startedAt: 11,
 				},
 			],
 		});
@@ -42,14 +45,27 @@ describe("readRunStatus", () => {
 				{
 					agent: "delegate",
 					state: "running",
-					model: "epyc/flash",
+					provider: "epyc",
+					model: "flash",
+					thinking: "high",
+					input: 9000,
+					output: 999,
 					sessionFile: "/child.jsonl",
 					context: 1234,
 					contextLimit: 262144,
 					toolCount: 3,
+					startedAt: 11,
+					task: "Run the tests",
 				},
 			],
 		});
+	});
+
+	it("prefers the resolved model over the requested one", () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-attach-test-"));
+		const dir = writeRun(root, "run-4", { steps: [{ model: "epyc/auto", resolvedModel: { provider: "intl", model: "qwen3.8-flash-next" } }] });
+		const child = readRunStatus(dir, "run-4")?.children[0];
+		assert.deepEqual([child?.provider, child?.model], ["intl", "qwen3.8-flash-next"]);
 	});
 
 	it("returns undefined before the runner writes status.json", () => {

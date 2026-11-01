@@ -275,6 +275,7 @@ function rank(order: string[], label: string): number {
 interface Cells {
 	name: string;
 	task: string;
+	model: string;
 	state: string;
 	elapsed: string;
 	context: string;
@@ -286,6 +287,8 @@ function cells(entry: RosterEntry, task: string, now: number): Cells {
 	return {
 		name: entry.step ? `${child.agent} ${entry.step}` : child.agent,
 		task,
+		// Without the provider: it costs width and rarely tells children apart.
+		model: child.model ?? "",
 		state: stateLabel(child.state),
 		elapsed: child.startedAt === undefined ? "" : formatDuration(end - child.startedAt),
 		context: child.context === undefined ? "" : formatContext(child.context, child.contextLimit),
@@ -297,26 +300,36 @@ type Widths = Record<keyof Cells, number>;
 // Every column as wide as its widest cell; only the task column gives way when the terminal is narrow.
 function columnWidths(table: Cells[], width: number): Widths {
 	const widest = (key: keyof Cells) => Math.max(0, ...table.map((cells) => visibleWidth(cells[key])));
-	const widths = { name: widest("name"), task: 0, state: widest("state"), elapsed: widest("elapsed"), context: widest("context") };
-	const fixed = ROW_INDENT + widths.name + widths.state + widths.elapsed + widths.context + 4 * GAP.length;
+	const widths = {
+		name: widest("name"),
+		task: 0,
+		model: widest("model"),
+		state: widest("state"),
+		elapsed: widest("elapsed"),
+		context: widest("context"),
+	};
+	// Each shown column after the name brings one gap; the task's own gap is counted here too.
+	const shown = [widths.model, widths.state, widths.elapsed, widths.context].filter((columnWidth) => columnWidth > 0);
+	const fixed = ROW_INDENT + widths.name + shown.reduce((sum, columnWidth) => sum + columnWidth + GAP.length, 0) + GAP.length;
 	return { ...widths, task: Math.max(0, Math.min(widest("task"), MAX_TASK_WIDTH, width - fixed)) };
 }
 
-// Keeps state, time and context next to the task on a wide terminal instead of at its far edge.
+// Keeps model, state, time and context next to the task on a wide terminal instead of at its far edge.
 const MAX_TASK_WIDTH = 80;
 
-// "  › delegate  Run the bash command sleep 150…  running  1m 20s  24.4k / 262k ctx"
+// "  › delegate  Run the bash command sleep 150…  deepseek-v4-flash  running  1m 20s  24k / 262k ctx"
 function row(cells: Cells, selected: boolean, widths: Widths, width: number, theme: Theme): string {
 	const name = pad(cells.name, widths.name);
-	const task = pad(truncateToWidth(cells.task, widths.task, "…"), widths.task);
-	const columns = [
-		`  ${selected ? theme.fg("accent", "›") : " "} ${selected ? theme.bold(name) : name}`,
-		theme.fg("muted", task),
-		stateColor(cells.state, theme)(pad(cells.state, widths.state)),
-		theme.fg("dim", padStart(cells.elapsed, widths.elapsed)),
-		theme.fg("dim", padStart(cells.context, widths.context)),
+	const columns: [number, string][] = [
+		[widths.task, theme.fg("muted", pad(truncateToWidth(cells.task, widths.task, "…"), widths.task))],
+		[widths.model, theme.fg("dim", pad(cells.model, widths.model))],
+		[widths.state, stateColor(cells.state, theme)(pad(cells.state, widths.state))],
+		[widths.elapsed, theme.fg("dim", padStart(cells.elapsed, widths.elapsed))],
+		[widths.context, theme.fg("dim", padStart(cells.context, widths.context))],
 	];
-	return truncateToWidth(columns.join(GAP), width);
+	// A column empty in every row (no model known, say) is left out with its gap.
+	const shown = columns.filter(([columnWidth]) => columnWidth > 0).map(([, text]) => text);
+	return truncateToWidth([`  ${selected ? theme.fg("accent", "›") : " "} ${selected ? theme.bold(name) : name}`, ...shown].join(GAP), width);
 }
 
 // Width of "  › " before the name column.

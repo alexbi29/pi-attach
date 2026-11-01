@@ -14,10 +14,11 @@ import {
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
 	truncateToWidth,
+	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { type FSWatcher, watch } from "node:fs";
 import { dirname, join } from "node:path";
-import { formatContext, formatDuration, shortKeyHint } from "./format.ts";
+import { formatDuration, formatTokens, shortKeyHint } from "./format.ts";
 import { connectLiveStream, type LiveStreamConnection, type StreamFrame } from "./live-stream.ts";
 import { interrupt, resume, steer } from "./rpc.ts";
 import { type ChildStatus, type RunStatus, readRunStatus } from "./run-status.ts";
@@ -42,7 +43,8 @@ export async function openView(target: ViewTarget, events: EventBus, ctx: Extens
 // Child states that take live input; any other state is revived with `resume`.
 const STEERABLE_STATES = new Set(["running", "queued"]);
 const HEADER_ROWS = 1;
-const STATUS_ROWS = 1;
+// The key hint row and pi's stats line.
+const STATUS_ROWS = 2;
 // File watchers fire in bursts while the child writes; one sync per burst is enough.
 const SYNC_DEBOUNCE_MS = 30;
 // Safety net for missed watcher events and the clock in the header.
@@ -123,7 +125,7 @@ class ChildView implements Component, Focusable {
 		const end = body.length - this.scrollFromEnd;
 		const visible = body.slice(Math.max(0, end - this.transcriptRows), end);
 		const padding = Array.from({ length: this.transcriptRows - visible.length }, () => "");
-		return [this.renderHeader(width), ...padding, ...visible, ...editorLines, this.renderStatus(width)];
+		return [this.renderHeader(width), ...padding, ...visible, ...editorLines, this.renderStatus(width), this.renderFooter(width)];
 	}
 
 	handleInput(data: string): void {
@@ -311,9 +313,7 @@ class ChildView implements Component, Focusable {
 		const child = this.child;
 		const name = `${child?.agent ?? "subagent"} · ${this.target.runId.slice(0, 8)}`;
 		const facts = [
-			child?.model,
 			child?.state ?? this.run?.state ?? "starting",
-			child?.context === undefined ? undefined : formatContext(child.context, child.contextLimit),
 			child?.toolCount === undefined ? undefined : `${child.toolCount} tools`,
 			this.run?.startedAt === undefined ? undefined : formatDuration((this.run.endedAt ?? Date.now()) - this.run.startedAt),
 			this.scrollFromEnd > 0 ? `↑${this.scrollFromEnd}` : undefined,
@@ -330,4 +330,31 @@ class ChildView implements Component, Focusable {
 		].join(" · ");
 		return truncateToWidth(this.status ? `${this.theme.fg("dim", this.status)} · ${hints}` : hints, width);
 	}
+
+	// pi's own stats line, for the child: "↑194k ↓8.9k 9.3%/262k" left, "(intl) qwen3.8-flash-next • high" right.
+	private renderFooter(width: number): string {
+		const child = this.child;
+		const theme = this.theme;
+		const left = [
+			child?.input ? `↑${formatTokens(child.input)}` : undefined,
+			child?.output ? `↓${formatTokens(child.output)}` : undefined,
+			child?.context === undefined ? undefined : contextUsage(child.context, child.contextLimit, theme),
+		].filter((part) => part !== undefined);
+		// The session file knows the level the child runs at now; status.json only what it was launched with.
+		const level = this.transcript.thinkingLevel !== "off" ? this.transcript.thinkingLevel : child?.thinking;
+		const model = child?.model ? `${child.provider ? `(${child.provider}) ` : ""}${child.model}${level ? ` • ${level}` : ""}` : "";
+		const leftText = truncateToWidth(left.join(" "), width, "...");
+		// Same 2-column minimum gap as pi's footer; the model gives way first.
+		const right = truncateToWidth(model, Math.max(0, width - visibleWidth(leftText) - 2), "");
+		const gap = " ".repeat(Math.max(0, width - visibleWidth(leftText) - visibleWidth(right)));
+		return theme.fg("dim", leftText) + theme.fg("dim", gap + right);
+	}
+}
+
+// "9.3%/262k", colored as pi colors its own context use: warning above 70%, error above 90%.
+function contextUsage(context: number, limit: number | undefined, theme: Theme): string {
+	if (!limit) return formatTokens(context);
+	const percent = (context / limit) * 100;
+	const text = `${percent.toFixed(1)}%/${formatTokens(limit)}`;
+	return percent > 90 ? theme.fg("error", text) : percent > 70 ? theme.fg("warning", text) : text;
 }

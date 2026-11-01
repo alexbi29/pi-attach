@@ -35,6 +35,8 @@ export interface TranscriptDisplay {
 
 /** A child's conversation as a pi component tree, kept in step with its session file. */
 export class Transcript extends Container {
+	/** The child's current thinking level from its session file ("off" until it records one). */
+	thinkingLevel = "off";
 	private readonly tui: TUI;
 	private readonly cwd: string;
 	private readonly display: TranscriptDisplay;
@@ -77,6 +79,7 @@ export class Transcript extends Container {
 		const entries = sessionEntries(chunk);
 		// Compaction and similar entries rewrite the visible history: rebuild instead of appending.
 		if (entries.some((entry) => !APPEND_ONLY_TYPES.has(entry.type))) return this.reload();
+		for (const entry of entries) if (entry.type === "thinking_level_change") this.thinkingLevel = entry.thinkingLevel;
 		this.renderMessages(entries.flatMap((entry) => (entry.type === "message" ? [entry.message] : [])));
 		return true;
 	}
@@ -119,7 +122,9 @@ export class Transcript extends Container {
 		this.assistants = [];
 		this.pending = new Map();
 		this.streaming = undefined;
-		this.renderMessages(buildSessionContext(sessionEntries(content)).messages);
+		const context = buildSessionContext(sessionEntries(content));
+		this.thinkingLevel = context.thinkingLevel;
+		this.renderMessages(context.messages);
 		return true;
 	}
 

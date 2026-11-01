@@ -144,3 +144,21 @@ describe("Transcript.showToolOutput", () => {
 		assert.ok(text(transcript).includes("early line"));
 	});
 });
+
+describe("Transcript.thinkingLevel", () => {
+	it("follows the session's thinking level changes", () => {
+		const file = sessionFile();
+		const transcript = newTranscript();
+		transcript.open(file);
+		assert.equal(transcript.thinkingLevel, "off");
+		entryCount++;
+		appendFileSync(
+			file,
+			`${JSON.stringify({ type: "thinking_level_change", id: `e${entryCount}`, parentId: null, timestamp: new Date(0).toISOString(), thinkingLevel: "max" })}\n`,
+		);
+		transcript.refresh();
+		assert.equal(transcript.thinkingLevel, "max");
+		transcript.open(file);
+		assert.equal(transcript.thinkingLevel, "max");
+	});
+});
