@@ -36,6 +36,19 @@ describe("rosterEntries", () => {
 		);
 	});
 
+	it("lists a resumed conversation once, as its newest run, and keeps its siblings", () => {
+		const entries = rosterEntries([
+			run("before-resume", [child("paused", NOW - 5 * MINUTE, { sessionFile: "/s/one.jsonl", endedAt: NOW - 4 * MINUTE })]),
+			run("resumed", [child("complete", NOW - 3 * MINUTE, { sessionFile: "/s/one.jsonl", endedAt: NOW - MINUTE })]),
+			run("parallel", [child("complete", NOW - 9 * MINUTE, { sessionFile: "/s/two.jsonl", endedAt: NOW - 8 * MINUTE })]),
+			run("unsaved", [child("running", NOW - 2 * MINUTE)]),
+		]);
+		assert.deepEqual(
+			entries.map((entry) => entry.target.runId),
+			["unsaved", "resumed", "parallel"],
+		);
+	});
+
 	it("numbers the children of a multi-step run and targets each by index", () => {
 		const [first, second] = rosterEntries([run("wf", [child("running", NOW - 2), child("running", NOW - 1)])]);
 		assert.deepEqual(second?.target, { runId: "wf", asyncDir: "/runs/wf", index: 0 });

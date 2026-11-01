@@ -17,9 +17,12 @@ export interface RosterEntry {
 	endedAt?: number;
 }
 
-/** Every started child of `runs`: active ones first, then the rest; newest first in each. */
+/**
+ * Every started conversation in `runs`, one row each: active ones first, then the rest; newest first in each.
+ * A resumed child is a new run writing the same session file, so only its newest run is listed.
+ */
 export function rosterEntries(runs: RunStatus[]): RosterEntry[] {
-	const entries = runs.flatMap((run) =>
+	const children = runs.flatMap((run) =>
 		run.children.flatMap((child, index): RosterEntry[] => {
 			// A child that has not started has nothing to show yet.
 			if (child.state === "pending") return [];
@@ -35,7 +38,7 @@ export function rosterEntries(runs: RunStatus[]): RosterEntry[] {
 			];
 		}),
 	);
-	return entries.sort(
+	return latestPerSession(children).sort(
 		(a, b) => Number(isActive(b.child)) - Number(isActive(a.child)) || (b.child.startedAt ?? 0) - (a.child.startedAt ?? 0),
 	);
 }
@@ -43,6 +46,18 @@ export function rosterEntries(runs: RunStatus[]): RosterEntry[] {
 /** Whether `entry` belongs to the default view at `now`: active (no end time), or ended in the last 10 minutes. */
 export function isRecent(entry: RosterEntry, now: number): boolean {
 	return entry.endedAt === undefined || now - entry.endedAt <= RECENT_MS;
+}
+
+// The old run stays behind as "paused" or "done" after a resume; opening it shows the same conversation.
+function latestPerSession(entries: RosterEntry[]): RosterEntry[] {
+	const latest = new Map<string, RosterEntry>();
+	const unsaved: RosterEntry[] = [];
+	for (const entry of entries) {
+		const file = entry.child.sessionFile;
+		if (!file) unsaved.push(entry);
+		else if ((entry.child.startedAt ?? 0) >= (latest.get(file)?.child.startedAt ?? -1)) latest.set(file, entry);
+	}
+	return [...latest.values(), ...unsaved];
 }
 
 // Long enough to read a result after a child ends; Tab in the list shows older ones.
