@@ -120,10 +120,10 @@ describe("Roster", () => {
 		assert.equal(ui.press(DOWN), false);
 		ui.type("");
 		assert.equal(ui.press(DOWN), true);
-		// At the table's natural width the task column is exactly as wide as its longest task.
-		assert.deepEqual(ui.lines(36), [
-			"› delegate  second task  running  1s",
-			"  delegate  first task   running  2s",
+		// The longest task plus its 10-column margin: the task column is exactly that wide.
+		assert.deepEqual(ui.lines(46), [
+			"› delegate  second task            running  1s",
+			"  delegate  first task             running  2s",
 			"  enter open · esc back",
 		]);
 		ui.roster.dispose();
@@ -148,9 +148,9 @@ describe("Roster", () => {
 			run("b", [child("paused", now - 395_000, { agent: "reviewer", task: "short", model: "qwen3.8-flash-next", endedAt: now, context: 210_488, contextLimit: 1_000_000 })]),
 		]);
 		ui.press(DOWN);
-		assert.deepEqual(ui.lines(82).slice(0, 2), [
-			"› worker    a long task text  deepseek-v4-flash   running  1m 24s   24k / 262k ctx",
-			"  reviewer  short             qwen3.8-flash-next  paused   6m 35s  210k / 1.0M ctx",
+		assert.deepEqual(ui.lines(92).slice(0, 2), [
+			"› worker    a long task text            deepseek-v4-flash   running  1m 24s   24k / 262k ctx",
+			"  reviewer  short                       qwen3.8-flash-next  paused   6m 35s  210k / 1.0M ctx",
 		]);
 		ui.roster.dispose();
 	});
@@ -169,6 +169,9 @@ describe("Roster", () => {
 				[width, width],
 			);
 			assert.ok(rows.every((row) => row.endsWith(" ctx")));
+			// A task too long for its column stops 10 columns short of the next one.
+			// biome-ignore lint/suspicious/noControlCharactersInRegex: pi-tui wraps the ellipsis in reset codes
+			if (width === 60) assert.match(rows[0] ?? "", /…(\x1b\[0m)?\s{12}\S/);
 		}
 		ui.roster.dispose();
 	});

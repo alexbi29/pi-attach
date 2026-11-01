@@ -322,7 +322,7 @@ function columnWidths(table: Cells[], width: number): Widths {
 function row(cells: Cells, selected: boolean, widths: Widths, width: number, theme: Theme): string {
 	const name = pad(cells.name, widths.name);
 	const columns: [number, string][] = [
-		[widths.task, theme.fg("muted", pad(truncateToWidth(cells.task, widths.task, "…"), widths.task))],
+		[widths.task, theme.fg("muted", pad(truncateToWidth(cells.task, Math.max(0, widths.task - TASK_MARGIN), "…"), widths.task))],
 		[widths.model, theme.fg("dim", pad(cells.model, widths.model))],
 		[widths.state, stateColor(cells.state, theme)(pad(cells.state, widths.state))],
 		[widths.elapsed, theme.fg("dim", padStart(cells.elapsed, widths.elapsed))],
@@ -332,6 +332,9 @@ function row(cells: Cells, selected: boolean, widths: Widths, width: number, the
 	const shown = columns.filter(([columnWidth]) => columnWidth > 0).map(([, text]) => text);
 	return truncateToWidth([`${selected ? theme.fg("accent", "›") : " "} ${selected ? theme.bold(name) : name}`, ...shown].join(GAP), width);
 }
+
+// Blank columns kept after a long task, so its text does not run into the model and the numbers.
+const TASK_MARGIN = 10;
 
 // Width of "› " before the name column. Rows start flush left like the editor and pi's footer; hints line up with names.
 const ROW_INDENT = 2;
