@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import type { Component, TUI } from "@earendil-works/pi-tui";
+import { type Component, type TUI, visibleWidth } from "@earendil-works/pi-tui";
 import { isRecent, Roster, rosterEntries } from "../src/roster.ts";
 import type { ChildStatus, RunStatus, SessionRuns } from "../src/run-status.ts";
 import type { ViewTarget } from "../src/view.ts";
@@ -90,7 +90,8 @@ function harness(runs: RunStatus[]) {
 		notices,
 		tui,
 		press: (key: string) => onInput?.(key)?.consume === true,
-		lines: () => (widget?.render(120) ?? []).map((line) => line.trimEnd()),
+		// Rows fill the width; tests pick a width or trim the padding.
+		lines: (width = 120) => (widget?.render(width) ?? []).map((line) => line.trimEnd()),
 		type: (text: string) => {
 			editorText = text;
 		},
@@ -119,7 +120,8 @@ describe("Roster", () => {
 		assert.equal(ui.press(DOWN), false);
 		ui.type("");
 		assert.equal(ui.press(DOWN), true);
-		assert.deepEqual(ui.lines(), [
+		// At the table's natural width the task column is exactly as wide as its longest task.
+		assert.deepEqual(ui.lines(36), [
 			"› delegate  second task  running  1s",
 			"  delegate  first task   running  2s",
 			"  enter open · esc back",
@@ -135,7 +137,7 @@ describe("Roster", () => {
 		]);
 		assert.deepEqual(ui.lines(), ["1 asking · 1 running · ↓ to open"]);
 		ui.press(DOWN);
-		assert.match(ui.lines()[0] ?? "", /^› delegate {2}stuck {2}asking +1s$/);
+		assert.match(ui.lines()[0] ?? "", /^› delegate {2}stuck +asking +1s$/);
 		ui.roster.dispose();
 	});
 
@@ -146,10 +148,28 @@ describe("Roster", () => {
 			run("b", [child("paused", now - 395_000, { agent: "reviewer", task: "short", model: "qwen3.8-flash-next", endedAt: now, context: 210_488, contextLimit: 1_000_000 })]),
 		]);
 		ui.press(DOWN);
-		assert.deepEqual(ui.lines().slice(0, 2), [
+		assert.deepEqual(ui.lines(82).slice(0, 2), [
 			"› worker    a long task text  deepseek-v4-flash   running  1m 24s   24k / 262k ctx",
 			"  reviewer  short             qwen3.8-flash-next  paused   6m 35s  210k / 1.0M ctx",
 		]);
+		ui.roster.dispose();
+	});
+
+	it("ends every row at the terminal's edge, where pi's footer ends", () => {
+		const now = Date.now();
+		const ui = harness([
+			run("a", [child("running", now - 84_000, { task: "a long task text", context: 24_416, contextLimit: 262_144 })]),
+			run("b", [child("paused", now - 395_000, { task: "short", endedAt: now, context: 210_488, contextLimit: 1_000_000 })]),
+		]);
+		ui.press(DOWN);
+		for (const width of [60, 150]) {
+			const rows = ui.lines(width).slice(0, 2);
+			assert.deepEqual(
+				rows.map((row) => visibleWidth(row)),
+				[width, width],
+			);
+			assert.ok(rows.every((row) => row.endsWith(" ctx")));
+		}
 		ui.roster.dispose();
 	});
 

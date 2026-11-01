@@ -300,7 +300,8 @@ function cells(entry: RosterEntry, task: string, now: number): Cells {
 
 type Widths = Record<keyof Cells, number>;
 
-// Every column as wide as its widest cell; only the task column gives way when the terminal is narrow.
+// Every column as wide as its widest cell, except the task: it takes the rest of the width, so the last
+// column ends at the terminal's edge, where pi's footer puts the model.
 function columnWidths(table: Cells[], width: number): Widths {
 	const widest = (key: keyof Cells) => Math.max(0, ...table.map((cells) => visibleWidth(cells[key])));
 	const widths = {
@@ -314,11 +315,8 @@ function columnWidths(table: Cells[], width: number): Widths {
 	// Each shown column after the name brings one gap; the task's own gap is counted here too.
 	const shown = [widths.model, widths.state, widths.elapsed, widths.context].filter((columnWidth) => columnWidth > 0);
 	const fixed = ROW_INDENT + widths.name + shown.reduce((sum, columnWidth) => sum + columnWidth + GAP.length, 0) + GAP.length;
-	return { ...widths, task: Math.max(0, Math.min(widest("task"), MAX_TASK_WIDTH, width - fixed)) };
+	return { ...widths, task: Math.max(0, width - fixed) };
 }
-
-// Keeps model, state, time and context next to the task on a wide terminal instead of at its far edge.
-const MAX_TASK_WIDTH = 80;
 
 // "  › delegate  Run the bash command sleep 150…  deepseek-v4-flash  running  1m 20s  24k / 262k ctx"
 function row(cells: Cells, selected: boolean, widths: Widths, width: number, theme: Theme): string {
