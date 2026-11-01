@@ -128,8 +128,10 @@ class ChildView implements Component, Focusable {
 
 	handleInput(data: string): void {
 		const kb = this.keybindings;
+		// Esc means "back" here, not pi's abort: leaving the view must never stop the child by accident.
+		if (kb.matches(data, "app.interrupt")) return this.done();
 		if (kb.matches(data, "app.exit") && this.editor.getText() === "") return this.done();
-		if (kb.matches(data, "app.interrupt")) return void this.interrupt();
+		if (kb.matches(data, "app.clear")) return this.clearOrInterrupt();
 		if (kb.matches(data, "app.tools.expand")) return this.toggle("toolsExpanded");
 		if (kb.matches(data, "app.thinking.toggle")) return this.toggle("hideThinking");
 		if (kb.matches(data, "tui.altScreen.pageUp")) return this.scroll(this.transcriptRows);
@@ -272,6 +274,12 @@ class ChildView implements Component, Focusable {
 		this.sync();
 	}
 
+	private clearOrInterrupt(): void {
+		if (this.editor.getText() === "") return void this.interrupt();
+		this.editor.setText("");
+		this.tui.requestRender();
+	}
+
 	private async interrupt(): Promise<void> {
 		this.setStatus("Interrupting…");
 		const result = await interrupt(this.events, this.runTarget());
@@ -316,9 +324,9 @@ class ChildView implements Component, Focusable {
 	private renderStatus(width: number): string {
 		const hints = [
 			keyHint("tui.input.submit", "send"),
-			keyHint("app.interrupt", "interrupt"),
+			keyHint("app.clear", "interrupt"),
 			keyHint("app.tools.expand", "tools"),
-			keyHint("app.exit", "close"),
+			keyHint("app.interrupt", "close"),
 		].join(" · ");
 		return truncateToWidth(this.status ? `${this.theme.fg("dim", this.status)} · ${hints}` : hints, width);
 	}

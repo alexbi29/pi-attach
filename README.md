@@ -27,11 +27,11 @@ In the view:
 | Key (pi keybinding) | Action |
 |---|---|
 | Enter (`tui.input.submit`) | Send the message to the child: steers a running child (or queues a follow-up when it is between turns); resumes a paused, finished or failed child, and the view follows the resumed run |
-| Esc (`app.interrupt`) | Interrupt the child |
+| Ctrl+C (`app.clear`, empty editor) | Interrupt the child (a resumable pause); with text in the editor it clears the editor |
 | Ctrl+O (`app.tools.expand`) | Expand or collapse tool output |
 | `app.thinking.toggle` | Show or hide thinking |
 | PageUp/PageDown, wheel | Scroll |
-| Ctrl+D (`app.exit`, empty editor) | Close the view |
+| Esc (`app.interrupt`), Ctrl+D (`app.exit`, empty editor) | Close the view; the child keeps running |
 
 Keys follow your `~/.pi/agent/keybindings.json`.
 
