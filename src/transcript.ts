@@ -61,6 +61,13 @@ export class Transcript extends Container {
 		this.toolDefinitions = builtInToolDefinitions(cwd);
 	}
 
+	/** Forget the session file and everything rendered from it, as when the view switches to another child. */
+	reset(): void {
+		this.sessionFile = undefined;
+		this.clearRendered();
+		this.earlyOutputs.clear();
+	}
+
 	/** Render `sessionFile` from the start; later `refresh()` calls follow it. */
 	open(sessionFile: string): void {
 		this.sessionFile = sessionFile;
@@ -116,16 +123,22 @@ export class Transcript extends Container {
 		if (!this.sessionFile) return false;
 		const size = statSync(this.sessionFile).size;
 		const content = readCompleteLines(this.sessionFile, 0, size);
+		this.clearRendered();
 		this.offset = Buffer.byteLength(content);
+		const context = buildSessionContext(sessionEntries(content));
+		this.thinkingLevel = context.thinkingLevel;
+		this.renderMessages(context.messages);
+		return true;
+	}
+
+	private clearRendered(): void {
+		this.offset = 0;
+		this.thinkingLevel = "off";
 		this.clear();
 		this.tools = [];
 		this.assistants = [];
 		this.pending = new Map();
 		this.streaming = undefined;
-		const context = buildSessionContext(sessionEntries(content));
-		this.thinkingLevel = context.thinkingLevel;
-		this.renderMessages(context.messages);
-		return true;
 	}
 
 	// Mirrors InteractiveMode.renderSessionItems: tool calls render under their assistant message,

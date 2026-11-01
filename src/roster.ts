@@ -1,97 +1,26 @@
-// Inline list of this session's subagents under the editor: ↓ on an empty editor or the shortcut opens it, Enter opens a child.
-import type { ExtensionContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
-import { type Editor, getKeybindings, isKeyRelease, type TUI, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { contextColor, formatContext, formatDuration, shortKeyHint, stateColor, stateLabel } from "./format.ts";
-import type { ChildStatus, RunStatus, SessionRuns } from "./run-status.ts";
-import { readTask } from "./task.ts";
+// The subagent list under the main editor: a one-line count, ↓ on an empty editor or the shortcut opens the list.
+import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import { type Editor, getKeybindings, isKeyRelease, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
+import { ChildList, summary, targetKey } from "./child-list.ts";
+import { shortKeyHint } from "./format.ts";
+import type { SessionRuns } from "./run-status.ts";
 import type { ViewTarget } from "./view.ts";
-
-/** One listed child: where to open it and what its row shows. */
-export interface RosterEntry {
-	key: string;
-	target: ViewTarget;
-	child: ChildStatus;
-	/** "2/4" for a child of a multi-step run; absent for a single child. */
-	step?: string;
-	/** When the child ended; absent while it is active. */
-	endedAt?: number;
-}
-
-/**
- * Every started conversation in `runs`, one row each: active ones first, then the rest; newest first in each.
- * A resumed child is a new run writing the same session file, so only its newest run is listed.
- */
-export function rosterEntries(runs: RunStatus[]): RosterEntry[] {
-	const children = runs.flatMap((run) =>
-		run.children.flatMap((child, index): RosterEntry[] => {
-			// A child that has not started has nothing to show yet.
-			if (child.state === "pending") return [];
-			const endedAt = isActive(child) ? undefined : (child.endedAt ?? run.endedAt);
-			return [
-				{
-					key: `${run.runId}:${index}`,
-					target: { runId: run.runId, asyncDir: run.asyncDir, index },
-					child,
-					...(run.children.length > 1 ? { step: `${index + 1}/${run.children.length}` } : {}),
-					...(endedAt === undefined ? {} : { endedAt }),
-				},
-			];
-		}),
-	);
-	return latestPerSession(children).sort(
-		(a, b) => Number(isActive(b.child)) - Number(isActive(a.child)) || (b.child.startedAt ?? 0) - (a.child.startedAt ?? 0),
-	);
-}
-
-/** Whether `entry` belongs to the default view at `now`: active (no end time), or ended in the last 10 minutes. */
-export function isRecent(entry: RosterEntry, now: number): boolean {
-	return entry.endedAt === undefined || now - entry.endedAt <= RECENT_MS;
-}
-
-// The old run stays behind as "paused" or "done" after a resume; opening it shows the same conversation.
-function latestPerSession(entries: RosterEntry[]): RosterEntry[] {
-	const latest = new Map<string, RosterEntry>();
-	const unsaved: RosterEntry[] = [];
-	for (const entry of entries) {
-		const file = entry.child.sessionFile;
-		if (!file) unsaved.push(entry);
-		else if ((entry.child.startedAt ?? 0) >= (latest.get(file)?.child.startedAt ?? -1)) latest.set(file, entry);
-	}
-	return [...latest.values(), ...unsaved];
-}
-
-// Long enough to read a result after a child ends; Tab in the list shows older ones.
-const RECENT_MS = 10 * 60_000;
-
-function isActive(child: ChildStatus): boolean {
-	return child.state === "running" || child.state === "queued";
-}
-
-// Which children the open list shows; it always opens on "recent" unless only older ones exist.
-type Scope = "recent" | "all";
 
 /** The widget and its keys for one session; `dispose` removes both. */
 export class Roster {
 	private readonly runs: SessionRuns;
-	// Shows the child view; resolves when the user leaves it.
-	private readonly onOpen: (target: ViewTarget) => Promise<void>;
+	// Shows the child view; resolves with the child shown last when the user leaves it.
+	private readonly onOpen: (target: ViewTarget) => Promise<ViewTarget | undefined>;
 	private readonly ctx: ExtensionContext;
 	private readonly timer: NodeJS.Timeout;
 	private readonly stopInput: () => void;
-	// Task lines by session file: a child's task never changes, so its file is read once.
-	private readonly tasks = new Map<string, string>();
-	private all: RosterEntry[] = [];
-	private recent: RosterEntry[] = [];
-	private scope: Scope = "recent";
-	private selectedKey: string | undefined;
-	// True while ↑↓ move the selection instead of the editor cursor.
-	private active = false;
+	private readonly list = new ChildList("main");
 	// True while a child view this list opened covers the screen; the list waits underneath, still open.
 	private viewing = false;
 	private shown = false;
 	private tui: TUI | undefined;
 
-	constructor(runs: SessionRuns, onOpen: (target: ViewTarget) => Promise<void>, ctx: ExtensionContext) {
+	constructor(runs: SessionRuns, onOpen: (target: ViewTarget) => Promise<ViewTarget | undefined>, ctx: ExtensionContext) {
 		this.runs = runs;
 		this.onOpen = onOpen;
 		this.ctx = ctx;
@@ -104,11 +33,8 @@ export class Roster {
 
 	/** Open the list from a shortcut or command: recent children, or all of them when none is recent. */
 	show(): void {
-		this.refresh();
-		if (this.all.length === 0) return this.ctx.ui.notify("No subagent runs in this session yet.", "info");
-		this.scope = this.recent.length > 0 ? "recent" : "all";
-		this.selectedKey = this.entries()[0]?.key;
-		this.active = true;
+		this.list.update(this.runs.list(), Date.now());
+		if (!this.list.open()) return this.ctx.ui.notify("No subagent runs in this session yet.", "info");
 		this.refresh();
 	}
 
@@ -118,27 +44,13 @@ export class Roster {
 		if (this.shown) this.ctx.ui.setWidget(WIDGET_KEY, undefined);
 	}
 
-	private entries(): RosterEntry[] {
-		return this.scope === "all" ? this.all : this.recent;
-	}
-
 	private refresh(): void {
-		const now = Date.now();
-		this.all = rosterEntries(this.runs.list());
-		this.recent = this.all.filter((entry) => isRecent(entry, now));
-		const entries = this.entries();
-		if (entries.length === 0) {
-			this.close();
+		this.list.update(this.runs.list(), Date.now());
+		if (!this.list.isOpen && this.list.others().length === 0) {
 			if (this.shown) this.ctx.ui.setWidget(WIDGET_KEY, undefined);
 			this.shown = false;
 			return;
 		}
-		for (const { child } of entries) {
-			if (!child.sessionFile || this.tasks.has(child.sessionFile)) continue;
-			const task = readTask(child.sessionFile);
-			if (task) this.tasks.set(child.sessionFile, task);
-		}
-		if (!entries.some((entry) => entry.key === this.selectedKey)) this.selectedKey = entries[0]?.key;
 		if (this.shown) return this.tui?.requestRender();
 		this.shown = true;
 		this.ctx.ui.setWidget(
@@ -160,51 +72,38 @@ export class Roster {
 	}
 
 	private handleKey(data: string): { consume: true } | undefined {
-		if (this.viewing || isKeyRelease(data) || this.entries().length === 0) return undefined;
+		if (this.viewing || isKeyRelease(data) || !this.shown) return undefined;
 		if (!this.editorFocused()) {
-			if (this.active) this.closeAndRefresh();
+			if (this.list.isOpen) this.closeAndRefresh();
 			return undefined;
 		}
-		const kb = getKeybindings();
-		if (!this.active) {
-			if (!kb.matches(data, "tui.editor.cursorDown") || this.ctx.ui.getEditorText() !== "") return undefined;
-			this.selectedKey = this.entries()[0]?.key;
-			this.active = true;
-			this.tui?.requestRender();
+		if (!this.list.isOpen) {
+			if (!getKeybindings().matches(data, "tui.editor.cursorDown") || this.ctx.ui.getEditorText() !== "") return undefined;
+			if (this.list.open()) this.tui?.requestRender();
 			return CONSUME;
 		}
-		const entries = this.entries();
-		const index = this.selectedIndex();
-		if (kb.matches(data, "tui.select.down")) {
-			this.select(entries[Math.min(index + 1, entries.length - 1)]);
-		} else if (kb.matches(data, "tui.select.up")) {
-			// Up from the first row hands the keys back to the editor, as if the list were below it.
-			if (index === 0) this.closeAndRefresh();
-			else this.select(entries[index - 1]);
-		} else if (kb.matches(data, "tui.select.confirm")) {
-			const entry = entries[index];
-			if (entry) void this.view(entry.target);
-		} else if (kb.matches(data, "tui.input.tab")) {
-			this.toggleScope();
-		} else if (kb.matches(data, "tui.select.cancel")) {
-			this.closeAndRefresh();
-		} else {
-			// Typing leaves the list and goes to the editor.
-			this.closeAndRefresh();
-			return undefined;
-		}
-		return CONSUME;
+		const result = this.list.handleKey(data);
+		if (result.kind === "open") void this.view(result.target);
+		// Closing can hide rows ("all" back to "recent"), so the widget is recomputed.
+		else this.refresh();
+		return result.kind === "passed" ? undefined : CONSUME;
 	}
 
-	// Esc in the child view comes back to the same row, the way Esc in a submenu returns to its menu.
+	// Esc in the child view comes back to the list, on the child viewed last.
 	private async view(target: ViewTarget): Promise<void> {
 		this.viewing = true;
 		try {
-			await this.onOpen(target);
+			const last = await this.onOpen(target);
+			if (last) this.list.select(targetKey(last));
 		} finally {
 			this.viewing = false;
-			this.tui?.requestRender();
+			this.refresh();
 		}
+	}
+
+	private closeAndRefresh(): void {
+		this.list.close();
+		this.refresh();
 	}
 
 	// pi-tui keeps the focused component private. The main editor is the focused component with
@@ -214,167 +113,14 @@ export class Roster {
 		return typeof focused?.getText === "function" && typeof focused.setText === "function";
 	}
 
-	private toggleScope(): void {
-		if (!this.canToggle()) return;
-		this.scope = this.scope === "all" ? "recent" : "all";
-		this.refresh();
-	}
-
-	// "all" needs older children to add anything; "recent" needs at least one row to show.
-	private canToggle(): boolean {
-		return this.scope === "recent" ? this.all.length > this.recent.length : this.recent.length > 0;
-	}
-
-	private close(): void {
-		this.active = false;
-		this.scope = "recent";
-	}
-
-	// Closing can hide rows ("all" back to "recent"), so the widget is recomputed.
-	private closeAndRefresh(): void {
-		this.close();
-		this.refresh();
-	}
-
-	private select(entry: RosterEntry | undefined): void {
-		this.selectedKey = entry?.key;
-		this.tui?.requestRender();
-	}
-
-	private selectedIndex(): number {
-		return Math.max(
-			0,
-			this.entries().findIndex((entry) => entry.key === this.selectedKey),
-		);
-	}
-
-	// pi-subagents' session name holds only the task's first 60 or so characters; the session file has all of it.
-	private taskOf(child: ChildStatus): string {
-		return (child.sessionFile ? this.tasks.get(child.sessionFile) : undefined) ?? child.task ?? "";
-	}
-
 	private render(width: number, theme: Theme): string[] {
-		const entries = this.entries();
-		if (entries.length === 0) return [];
-		if (!this.active) {
-			return [truncateToWidth(`${summary(entries, theme)} ${theme.fg("dim", "·")} ${shortKeyHint("tui.editor.cursorDown", "to open", theme)}`, width)];
-		}
-		const index = this.selectedIndex();
-		const start = index < MAX_ROWS ? 0 : index - MAX_ROWS + 1;
-		const visible = entries.slice(start, start + MAX_ROWS);
-		const now = Date.now();
-		// Column widths come from every entry, not just the visible ones, so scrolling never shifts them.
-		const table = entries.map((entry) => cells(entry, this.taskOf(entry.child), now));
-		const widths = columnWidths(table, width);
-		const rows = visible.map((_entry, offset) => row(table[start + offset] as Cells, start + offset === index, widths, width, theme));
-		const hidden = entries.length - visible.length;
-		const older = this.all.length - this.recent.length;
-		const toggle = this.scope === "all" ? "recent only" : `${older} older`;
-		const hints = [
-			shortKeyHint("tui.select.confirm", "open", theme),
-			...(this.canToggle() ? [shortKeyHint("tui.input.tab", toggle, theme)] : []),
-			shortKeyHint("tui.select.cancel", "back", theme),
-			...(hidden > 0 ? [theme.fg("dim", `${hidden} more`)] : []),
-		];
-		return [...rows, truncateToWidth(`  ${hints.join(theme.fg("dim", " · "))}`, width)];
+		if (this.list.isOpen) return this.list.render(width, theme);
+		const others = this.list.others();
+		if (others.length === 0) return [];
+		return [truncateToWidth(`${summary(others, theme)} ${theme.fg("dim", "·")} ${shortKeyHint("tui.editor.cursorDown", "to open", theme)}`, width)];
 	}
 }
 
 const WIDGET_KEY = "pi-attach-roster";
 const REFRESH_MS = 1000;
-const MAX_ROWS = 6;
 const CONSUME = { consume: true } as const;
-
-// "2 running · 1 done": one count per state, in the order a reader cares about.
-function summary(entries: RosterEntry[], theme: Theme): string {
-	const counts = new Map<string, number>();
-	for (const { child } of entries) {
-		const label = stateLabel(child.state, child.waiting);
-		counts.set(label, (counts.get(label) ?? 0) + 1);
-	}
-	const order = ["asking", "attention", "running", "paused", "failed", "done"];
-	const labels = [...counts.keys()].sort((a, b) => rank(order, a) - rank(order, b));
-	return labels.map((label) => stateColor(label, theme)(`${counts.get(label)} ${label}`)).join(theme.fg("dim", " · "));
-}
-
-function rank(order: string[], label: string): number {
-	const index = order.indexOf(label);
-	return index === -1 ? order.length : index;
-}
-
-// One row's plain-text cells; `row` pads and colors them.
-interface Cells {
-	name: string;
-	task: string;
-	model: string;
-	state: string;
-	elapsed: string;
-	context: string;
-	contextColor: ThemeColor;
-}
-
-function cells(entry: RosterEntry, task: string, now: number): Cells {
-	const { child } = entry;
-	const end = isActive(child) ? now : (child.endedAt ?? now);
-	return {
-		name: entry.step ? `${child.agent} ${entry.step}` : child.agent,
-		task,
-		// Without the provider: it costs width and rarely tells children apart.
-		model: child.model ?? "",
-		state: stateLabel(child.state, child.waiting),
-		elapsed: child.startedAt === undefined ? "" : formatDuration(end - child.startedAt),
-		context: child.context === undefined ? "" : formatContext(child.context, child.contextLimit),
-		contextColor: contextColor(child.context ?? 0, child.contextLimit, "text"),
-	};
-}
-
-type Widths = Record<Exclude<keyof Cells, "contextColor">, number>;
-
-// Every column as wide as its widest cell, except the task: it takes the rest of the width, so the last
-// column ends at the terminal's edge, where pi's footer puts the model.
-function columnWidths(table: Cells[], width: number): Widths {
-	const widest = (key: keyof Widths) => Math.max(0, ...table.map((cells) => visibleWidth(cells[key])));
-	const widths = {
-		name: widest("name"),
-		task: 0,
-		model: widest("model"),
-		state: widest("state"),
-		elapsed: widest("elapsed"),
-		context: widest("context"),
-	};
-	// Each shown column after the name brings one gap; the task's own gap is counted here too.
-	const shown = [widths.model, widths.state, widths.elapsed, widths.context].filter((columnWidth) => columnWidth > 0);
-	const fixed = ROW_INDENT + widths.name + shown.reduce((sum, columnWidth) => sum + columnWidth + GAP.length, 0) + GAP.length;
-	return { ...widths, task: Math.max(0, width - fixed) };
-}
-
-// "  › delegate  Run the bash command sleep 150…  deepseek-v4-flash  running  1m 20s  24k / 262k ctx"
-function row(cells: Cells, selected: boolean, widths: Widths, width: number, theme: Theme): string {
-	const name = pad(cells.name, widths.name);
-	const columns: [number, string][] = [
-		[widths.task, theme.fg("muted", pad(truncateToWidth(cells.task, Math.max(0, widths.task - TASK_MARGIN), "…"), widths.task))],
-		[widths.model, theme.fg("dim", pad(cells.model, widths.model))],
-		[widths.state, stateColor(cells.state, theme)(pad(cells.state, widths.state))],
-		// Each column its own tone: time in a quiet blue, context in plain text unless it is filling up.
-		[widths.elapsed, theme.fg("mdLink", padStart(cells.elapsed, widths.elapsed))],
-		[widths.context, theme.fg(cells.contextColor, padStart(cells.context, widths.context))],
-	];
-	// A column empty in every row (no model known, say) is left out with its gap.
-	const shown = columns.filter(([columnWidth]) => columnWidth > 0).map(([, text]) => text);
-	return truncateToWidth([`${selected ? theme.fg("accent", "›") : " "} ${selected ? theme.bold(name) : name}`, ...shown].join(GAP), width);
-}
-
-// Blank columns kept after a long task, so its text does not run into the model and the numbers.
-const TASK_MARGIN = 10;
-
-// Width of "› " before the name column. Rows start flush left like the editor and pi's footer; hints line up with names.
-const ROW_INDENT = 2;
-const GAP = "  ";
-
-function pad(text: string, width: number): string {
-	return text + " ".repeat(Math.max(0, width - visibleWidth(text)));
-}
-
-function padStart(text: string, width: number): string {
-	return " ".repeat(Math.max(0, width - visibleWidth(text))) + text;
-}

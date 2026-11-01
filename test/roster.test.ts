@@ -1,76 +1,13 @@
-// Tests for the inline subagent list under the editor: which children it lists and how its keys behave.
+// Tests for the subagent list under the main editor: its summary line, its keys, and leaving and returning from a view.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, type TUI, visibleWidth } from "@earendil-works/pi-tui";
-import { isRecent, Roster, rosterEntries } from "../src/roster.ts";
-import type { ChildStatus, RunStatus, SessionRuns } from "../src/run-status.ts";
+import { Roster } from "../src/roster.ts";
+import type { RunStatus, SessionRuns } from "../src/run-status.ts";
 import type { ViewTarget } from "../src/view.ts";
 
-const MINUTE = 60_000;
-const NOW = 100 * MINUTE;
-
-function run(runId: string, children: ChildStatus[], endedAt?: number): RunStatus {
-	return { runId, asyncDir: `/runs/${runId}`, state: "running", children, ...(endedAt === undefined ? {} : { endedAt }) };
-}
-
-const child = (state: string, startedAt: number, extra: Partial<ChildStatus> = {}): ChildStatus => ({
-	agent: "delegate",
-	state,
-	startedAt,
-	...extra,
-});
-
-describe("rosterEntries", () => {
-	it("lists every started child: active ones first, then the rest, newest first in each", () => {
-		const entries = rosterEntries([
-			run("done-new", [child("complete", NOW - 3 * MINUTE, { endedAt: NOW - MINUTE })]),
-			run("run-old", [child("running", NOW - 5 * MINUTE)]),
-			run("run-new", [child("queued", NOW - MINUTE)]),
-			run("done-old", [child("failed", NOW - 90 * MINUTE, { endedAt: NOW - 80 * MINUTE })]),
-			run("workflow", [child("pending", NOW)]),
-		]);
-		assert.deepEqual(
-			entries.map((entry) => entry.target.runId),
-			["run-new", "run-old", "done-new", "done-old"],
-		);
-	});
-
-	it("lists a resumed conversation once, as its newest run, and keeps its siblings", () => {
-		const entries = rosterEntries([
-			run("before-resume", [child("paused", NOW - 5 * MINUTE, { sessionFile: "/s/one.jsonl", endedAt: NOW - 4 * MINUTE })]),
-			run("resumed", [child("complete", NOW - 3 * MINUTE, { sessionFile: "/s/one.jsonl", endedAt: NOW - MINUTE })]),
-			run("parallel", [child("complete", NOW - 9 * MINUTE, { sessionFile: "/s/two.jsonl", endedAt: NOW - 8 * MINUTE })]),
-			run("unsaved", [child("running", NOW - 2 * MINUTE)]),
-		]);
-		assert.deepEqual(
-			entries.map((entry) => entry.target.runId),
-			["unsaved", "resumed", "parallel"],
-		);
-	});
-
-	it("numbers the children of a multi-step run and targets each by index", () => {
-		const [first, second] = rosterEntries([run("wf", [child("running", NOW - 2), child("running", NOW - 1)])]);
-		assert.deepEqual(second?.target, { runId: "wf", asyncDir: "/runs/wf", index: 0 });
-		assert.equal(second?.step, "1/2");
-		assert.equal(first?.step, "2/2");
-	});
-});
-
-describe("isRecent", () => {
-	it("keeps active children and ones that ended in the last ten minutes", () => {
-		const entries = rosterEntries([
-			run("running", [child("running", NOW - 3)]),
-			run("fresh", [child("complete", NOW - 2, { endedAt: NOW - 9 * MINUTE })]),
-			run("stale", [child("paused", NOW - 1, { endedAt: NOW - 11 * MINUTE })]),
-		]);
-		assert.deepEqual(Object.fromEntries(entries.map((entry) => [entry.target.runId, isRecent(entry, NOW)])), {
-			running: true,
-			fresh: true,
-			stale: false,
-		});
-	});
-});
+import { child, MINUTE, run } from "./fixtures.ts";
 
 // A fake UI that records the widget and the terminal input listener the list installs.
 function harness(runs: RunStatus[]) {
@@ -96,11 +33,11 @@ function harness(runs: RunStatus[]) {
 			notify: (message: string) => notices.push(message),
 		},
 	} as unknown as ExtensionContext;
-	// The child view stays open until the test calls closeView().
-	let closeView = () => {};
+	// The child view stays open until the test calls closeView(), which reports the child shown last.
+	let closeView = (_shown?: ViewTarget) => {};
 	const open = (target: ViewTarget) => {
 		opened.push(target);
-		return new Promise<void>((resolve) => {
+		return new Promise<ViewTarget | undefined>((resolve) => {
 			closeView = resolve;
 		});
 	};
@@ -109,8 +46,8 @@ function harness(runs: RunStatus[]) {
 		roster,
 		opened,
 		// Leave the child view, then let the list notice.
-		closeView: async () => {
-			closeView();
+		closeView: async (shown?: ViewTarget) => {
+			closeView(shown);
 			await new Promise((resolve) => setImmediate(resolve));
 		},
 		notices,
@@ -164,6 +101,15 @@ describe("Roster", () => {
 		assert.deepEqual(ui.lines(), ["1 asking · 1 running · ↓ to open"]);
 		ui.press(DOWN);
 		assert.match(ui.lines()[0] ?? "", /^› delegate {2}stuck +asking +1s$/);
+		ui.roster.dispose();
+	});
+
+	it("puts the cursor on the child viewed last when the view switched children", async () => {
+		const ui = harness(twoChildren());
+		ui.press(DOWN);
+		ui.press(ENTER);
+		await ui.closeView({ runId: "a", asyncDir: "/runs/a", index: 0 });
+		assert.match(ui.lines()[1] ?? "", /^› delegate {2}first task/);
 		ui.roster.dispose();
 	});
 

@@ -1,7 +1,6 @@
 // FleetView hook: an inspector plugin so Enter/H on a child opens our view instead of a terminal pane.
 import type { EventBus, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { MainActivity } from "./main-activity.ts";
-import { openView } from "./view.ts";
+import type { ViewTarget } from "./view.ts";
 
 /** Handle to undo a registration; safe to call more than once. */
 export interface Registration {
@@ -14,10 +13,10 @@ export interface Registration {
  */
 export function registerInspector(
 	events: EventBus,
-	main: MainActivity,
+	open: (target: ViewTarget, ctx: ExtensionContext) => Promise<unknown>,
 	getContext: () => ExtensionContext | undefined,
 ): Registration | undefined {
-	const request: RegistrationRequest = { version: 1, plugin: createPlugin(events, main, getContext) };
+	const request: RegistrationRequest = { version: 1, plugin: createPlugin(open, getContext) };
 	events.emit(REGISTER_EVENT, request);
 	if (!request.result) return undefined;
 	if (!request.result.ok) throw request.result.error;
@@ -53,7 +52,10 @@ interface RegistrationRequest {
 	result?: { ok: true; registration: Registration } | { ok: false; error: Error };
 }
 
-function createPlugin(events: EventBus, main: MainActivity, getContext: () => ExtensionContext | undefined): InspectorPlugin {
+function createPlugin(
+	open: (target: ViewTarget, ctx: ExtensionContext) => Promise<unknown>,
+	getContext: () => ExtensionContext | undefined,
+): InspectorPlugin {
 	return {
 		name: "pi-attach",
 		available: () => getContext()?.mode === "tui",
@@ -64,7 +66,7 @@ function createPlugin(events: EventBus, main: MainActivity, getContext: () => Ex
 			if (!ctx) return result("pi-attach has no active session.", true);
 			const view = { runId: target.runId, asyncDir: target.asyncDir, index: target.index ?? 0 };
 			// Fleet awaits open(); the view stays up after it returns, stacked above Fleet's overlay.
-			void openView(view, events, main, ctx);
+			void open(view, ctx);
 			return result(`Opened ${target.runId.slice(0, 8)} in this window.`);
 		},
 	};

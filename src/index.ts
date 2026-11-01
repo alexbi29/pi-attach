@@ -8,7 +8,7 @@ import { publishLiveStream } from "./live-stream.ts";
 import { MainActivity } from "./main-activity.ts";
 import { Roster } from "./roster.ts";
 import { defaultRunsRoot, SessionRuns } from "./run-status.ts";
-import { openView } from "./view.ts";
+import { openView, type ViewTarget } from "./view.ts";
 
 /** Extension factory: the live-stream publisher in subagents; inspector, subagent list, shortcut and /attach in parents. */
 export default function (pi: ExtensionAPI) {
@@ -19,24 +19,26 @@ export default function (pi: ExtensionAPI) {
 	let current: ExtensionContext | undefined;
 	let registration: Registration | undefined;
 	let roster: Roster | undefined;
+	// This session's runs, shared by the list under the editor and the one in the view.
+	let runs: SessionRuns | undefined;
 	const main = new MainActivity(pi);
+	const open = (target: ViewTarget, ctx: ExtensionContext) => openView(target, { events: pi.events, main, runs }, ctx);
 
 	pi.on("session_start", (_event, ctx) => {
 		current = ctx;
 		registration?.dispose();
-		registration = registerInspector(pi.events, main, () => current);
+		registration = registerInspector(pi.events, open, () => current);
 		roster?.dispose();
 		const parentSession = ctx.sessionManager.getSessionFile();
-		roster =
-			ctx.mode === "tui" && parentSession && !fleetViewEnabled()
-				? new Roster(new SessionRuns(parentSession, defaultRunsRoot()), (target) => openView(target, pi.events, main, ctx), ctx)
-				: undefined;
+		runs = parentSession ? new SessionRuns(parentSession, defaultRunsRoot()) : undefined;
+		roster = ctx.mode === "tui" && runs && !fleetViewEnabled() ? new Roster(runs, (target) => open(target, ctx), ctx) : undefined;
 	});
 	pi.on("session_shutdown", () => {
 		registration?.dispose();
 		registration = undefined;
 		roster?.dispose();
 		roster = undefined;
+		runs = undefined;
 		current = undefined;
 	});
 
@@ -63,7 +65,7 @@ export default function (pi: ExtensionAPI) {
 			const asyncDir = resolve(path);
 			// pi-subagents names each async run directory after its run id.
 			const target = { runId: basename(asyncDir), asyncDir, index: indexArg ? Number.parseInt(indexArg, 10) : 0 };
-			await openView(target, pi.events, main, ctx);
+			await open(target, ctx);
 		},
 	});
 }

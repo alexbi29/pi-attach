@@ -19,11 +19,12 @@ import {
 } from "@earendil-works/pi-tui";
 import { type FSWatcher, watch } from "node:fs";
 import { dirname, join } from "node:path";
+import { ChildList, summary } from "./child-list.ts";
 import type { MainActivity } from "./main-activity.ts";
 import { contextColor, formatDuration, formatTokens, shortKeyHint, spread, stateColor, stateLabel } from "./format.ts";
 import { connectLiveStream, type LiveStreamConnection, type StreamFrame } from "./live-stream.ts";
 import { interrupt, resume, steer } from "./rpc.ts";
-import { type ChildStatus, type RunStatus, readRunStatus } from "./run-status.ts";
+import { type ChildStatus, type RunStatus, readRunStatus, type SessionRuns } from "./run-status.ts";
 import { readTask } from "./task.ts";
 import { Transcript, type TranscriptDisplay } from "./transcript.ts";
 
@@ -34,16 +35,24 @@ export interface ViewTarget {
 	index: number;
 }
 
-/** Show `target` over the main chat until the user closes it; resolves on close. */
-export async function openView(target: ViewTarget, events: EventBus, main: MainActivity, ctx: ExtensionContext): Promise<void> {
+/** What the view works with besides its target: pi-subagents' RPC, the main session's activity, its runs. */
+export interface ViewServices {
+	events: EventBus;
+	main: MainActivity;
+	/** This session's runs, for the list inside the view; absent for an unsaved session. */
+	runs: SessionRuns | undefined;
+}
+
+/** Show `target` over the main chat until the user closes it; resolves with the child shown last. */
+export async function openView(target: ViewTarget, services: ViewServices, ctx: ExtensionContext): Promise<ViewTarget | undefined> {
 	// Start as the main chat shows things. pi saves its thinking toggle to settings on every press, so the file
 	// is current; toggles inside the view stay in the view.
 	const display: TranscriptDisplay = {
 		toolsExpanded: ctx.ui.getToolsExpanded(),
 		hideThinking: SettingsManager.create(ctx.cwd).getHideThinkingBlock(),
 	};
-	await ctx.ui.custom<void>(
-		(tui, theme, keybindings, done) => new ChildView(tui, theme, keybindings, target, events, main, display, ctx.cwd, done),
+	return ctx.ui.custom<ViewTarget>(
+		(tui, theme, keybindings, done) => new ChildView(tui, theme, keybindings, target, services, display, ctx.cwd, done),
 		// Covers the whole terminal so the child reads like the main chat, not a dialog.
 		{ overlay: true, overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%", margin: 0 } },
 	);
@@ -66,8 +75,11 @@ class ChildView implements Component, Focusable {
 	// Replaced when a resume continues the child as a new async run.
 	private target: ViewTarget;
 	private readonly events: EventBus;
-	private readonly done: () => void;
+	private readonly done: (shown: ViewTarget) => void;
 	private readonly main: MainActivity;
+	private readonly runs: SessionRuns | undefined;
+	// The same list as under the main editor, plus a "main" row; ↓ on an empty editor opens it.
+	private readonly list: ChildList | undefined;
 	private readonly stopMain: () => void;
 	private readonly display: TranscriptDisplay;
 	private readonly transcript: Transcript;
@@ -93,22 +105,24 @@ class ChildView implements Component, Focusable {
 		theme: Theme,
 		keybindings: KeybindingsManager,
 		target: ViewTarget,
-		events: EventBus,
-		main: MainActivity,
+		services: ViewServices,
 		display: TranscriptDisplay,
 		cwd: string,
-		done: () => void,
+		done: (shown: ViewTarget) => void,
 	) {
 		this.tui = tui;
 		this.theme = theme;
 		this.keybindings = keybindings;
 		this.target = target;
-		this.events = events;
+		this.events = services.events;
+		this.runs = services.runs;
+		this.list = services.runs ? new ChildList("view") : undefined;
+		this.list?.setCurrent(target);
 		this.done = done;
-		this.main = main;
+		this.main = services.main;
 		this.display = display;
-		main.markSeen();
-		this.stopMain = main.onChange(() => tui.requestRender());
+		this.main.markSeen();
+		this.stopMain = this.main.onChange(() => tui.requestRender());
 		this.transcript = new Transcript(tui, cwd, this.display);
 		this.editor = new Editor(tui, {
 			borderColor: (text) => theme.fg("borderMuted", text),
@@ -132,7 +146,8 @@ class ChildView implements Component, Focusable {
 	render(width: number): string[] {
 		const rows = this.tui.terminal.rows;
 		const editorLines = this.editor.render(width);
-		this.transcriptRows = Math.max(1, rows - HEADER_ROWS - STATUS_ROWS - editorLines.length);
+		const listLines = this.list?.isOpen ? this.list.render(width, this.theme) : [];
+		this.transcriptRows = Math.max(1, rows - HEADER_ROWS - STATUS_ROWS - editorLines.length - listLines.length);
 		const body = this.transcript.render(width);
 		// Keep the lines the user scrolled to in place while new output arrives below them.
 		if (this.scrollFromEnd > 0 && body.length > this.lastBodyLength) {
@@ -144,14 +159,27 @@ class ChildView implements Component, Focusable {
 		const end = body.length - this.scrollFromEnd;
 		const visible = body.slice(Math.max(0, end - this.transcriptRows), end);
 		const padding = Array.from({ length: this.transcriptRows - visible.length }, () => "");
-		return [this.renderHeader(width), ...padding, ...visible, ...editorLines, this.renderStatus(width), this.renderFooter(width)];
+		return [
+			this.renderHeader(width),
+			...padding,
+			...visible,
+			...editorLines,
+			...listLines,
+			this.renderStatus(width),
+			this.renderFooter(width),
+		];
 	}
 
 	handleInput(data: string): void {
 		const kb = this.keybindings;
+		if (this.list?.isOpen) return this.handleListKey(this.list, data);
 		// Esc means "back" here, not pi's abort: leaving the view must never stop the child by accident.
-		if (kb.matches(data, "app.interrupt")) return this.done();
-		if (kb.matches(data, "app.exit") && this.editor.getText() === "") return this.done();
+		if (kb.matches(data, "app.interrupt")) return this.done(this.target);
+		if (kb.matches(data, "app.exit") && this.editor.getText() === "") return this.done(this.target);
+		if (this.list && kb.matches(data, "tui.editor.cursorDown") && this.editor.getText() === "") {
+			this.list.open();
+			return this.tui.requestRender();
+		}
 		if (kb.matches(data, "app.clear")) return this.clearOrInterrupt();
 		if (kb.matches(data, "app.tools.expand")) return this.toggle("toolsExpanded");
 		if (kb.matches(data, "app.thinking.toggle")) return this.toggle("hideThinking");
@@ -228,7 +256,9 @@ class ChildView implements Component, Focusable {
 			changed = true;
 		}
 		this.connectLive();
-		if (changed || this.run?.endedAt === undefined) this.tui.requestRender();
+		if (this.runs) this.list?.update(this.runs.list(), Date.now());
+		// The list's times and states move every tick while it is open.
+		if (changed || this.run?.endedAt === undefined || this.list?.isOpen) this.tui.requestRender();
 	}
 
 	// The child opens its socket at session start; until then (and after it ends) each tick retries.
@@ -291,6 +321,7 @@ class ChildView implements Component, Focusable {
 	// Switch to the run a resume started; its session usually continues the same file.
 	private follow(target: ViewTarget): void {
 		this.target = target;
+		this.list?.setCurrent(target);
 		this.run = undefined;
 		// The resumed child runs in a new runner process with its own socket.
 		this.live?.close();
@@ -298,6 +329,30 @@ class ChildView implements Component, Focusable {
 		this.runWatcher?.close();
 		this.runWatcher = this.watch(target.asyncDir);
 		this.sync();
+	}
+
+	private handleListKey(list: ChildList, data: string): void {
+		const result = list.handleKey(data);
+		if (result.kind === "main") return this.done(this.target);
+		if (result.kind === "open") this.switchTo(list, result.target);
+		// Typing leaves the list and goes on into the editor.
+		if (result.kind === "passed") this.editor.handleInput(data);
+		this.tui.requestRender();
+	}
+
+	// Another child replaces this one in place: the view is reused, not stacked.
+	private switchTo(list: ChildList, target: ViewTarget): void {
+		list.setCurrent(target);
+		list.close();
+		this.transcript.reset();
+		this.watchedSessionFile = undefined;
+		this.sessionWatcher?.close();
+		this.sessionWatcher = undefined;
+		this.task = undefined;
+		this.status = "";
+		this.scrollFromEnd = 0;
+		this.lastBodyLength = 0;
+		this.follow(target);
 	}
 
 	private clearOrInterrupt(): void {
@@ -353,11 +408,12 @@ class ChildView implements Component, Focusable {
 		const child = this.child;
 		const state = stateLabel(child?.state ?? this.run?.state ?? "starting", child?.waiting);
 		const identity = `${theme.fg("accent", "subagent")} ${theme.bold(child?.agent ?? "subagent")} ${theme.fg("dim", "·")} ${stateColor(state, theme)(state)}`;
-		const left = [identity, this.mainNote(), this.status ? theme.fg("dim", this.status) : undefined]
+		const left = [identity, this.mainNote(), this.othersNote(), this.status ? theme.fg("dim", this.status) : undefined]
 			.filter((part) => part !== undefined)
 			.join(theme.fg("dim", " · "));
 		const hints = [
 			shortKeyHint("tui.input.submit", "send", theme),
+			...(this.list ? [shortKeyHint("tui.editor.cursorDown", "agents", theme)] : []),
 			shortKeyHint("app.clear", "interrupt", theme),
 			shortKeyHint("app.tools.expand", "tools", theme),
 			shortKeyHint("app.interrupt", "back to main", theme),
@@ -370,6 +426,12 @@ class ChildView implements Component, Focusable {
 		if (this.main.working) return this.theme.fg("dim", "main working");
 		if (this.main.unseen > 0) return this.theme.fg("warning", `main: ${this.main.unseen} new`);
 		return undefined;
+	}
+
+	// Other children waiting on an answer or a slow tool would otherwise go unseen while this one is open.
+	private othersNote(): string | undefined {
+		const waiting = this.list?.others().filter((entry) => entry.child.waiting) ?? [];
+		return waiting.length > 0 ? summary(waiting, this.theme) : undefined;
 	}
 
 	// pi's own stats line, for the child: "↑194k ↓8.9k 9.3%/262k" left, "(intl) qwen3.8-flash-next • high" right.
