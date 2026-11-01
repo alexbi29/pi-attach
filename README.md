@@ -23,15 +23,15 @@ Requires pi-subagents to be installed. To use pi-attach's list under the editor 
 While this session has subagents running, or finished in the last ten minutes, one line under the editor counts them:
 
 ```
-  2 running · 1 done · ↓ to open
+2 running · 1 done · ↓ to open
 ```
 
 `↓` on an empty editor opens the list, `↑↓` select, Enter opens the child, Tab shows older children (and Tab again hides them), Esc (or `↑` from the first row, or typing) goes back to the editor:
 
 ```
-  › delegate  Run the test suite and report failures  deepseek-v4-flash  running  1m 20s   24k / 262k ctx
-    reviewer  Review the diff in src/                 qwen3.8-flash      done        42s  210k / 262k ctx
-    enter open · tab 3 older · esc back
+› delegate  Run the test suite and report failures  deepseek-v4-flash  running  1m 20s   24k / 262k ctx
+  reviewer  Review the diff in src/                 qwen3.8-flash      done        42s  210k / 262k ctx
+  enter open · tab 3 older · esc back
 ```
 
 Other ways in:

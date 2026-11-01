@@ -229,7 +229,7 @@ export class Roster {
 		const entries = this.entries();
 		if (entries.length === 0) return [];
 		if (!this.active) {
-			return [truncateToWidth(`  ${summary(entries, theme)} ${theme.fg("dim", "·")} ${shortKeyHint("tui.editor.cursorDown", "to open", theme)}`, width)];
+			return [truncateToWidth(`${summary(entries, theme)} ${theme.fg("dim", "·")} ${shortKeyHint("tui.editor.cursorDown", "to open", theme)}`, width)];
 		}
 		const index = this.selectedIndex();
 		const start = index < MAX_ROWS ? 0 : index - MAX_ROWS + 1;
@@ -248,7 +248,7 @@ export class Roster {
 			shortKeyHint("tui.select.cancel", "back", theme),
 			...(hidden > 0 ? [theme.fg("dim", `${hidden} more`)] : []),
 		];
-		return [...rows, truncateToWidth(`    ${hints.join(theme.fg("dim", " · "))}`, width)];
+		return [...rows, truncateToWidth(`  ${hints.join(theme.fg("dim", " · "))}`, width)];
 	}
 }
 
@@ -329,11 +329,11 @@ function row(cells: Cells, selected: boolean, widths: Widths, width: number, the
 	];
 	// A column empty in every row (no model known, say) is left out with its gap.
 	const shown = columns.filter(([columnWidth]) => columnWidth > 0).map(([, text]) => text);
-	return truncateToWidth([`  ${selected ? theme.fg("accent", "›") : " "} ${selected ? theme.bold(name) : name}`, ...shown].join(GAP), width);
+	return truncateToWidth([`${selected ? theme.fg("accent", "›") : " "} ${selected ? theme.bold(name) : name}`, ...shown].join(GAP), width);
 }
 
-// Width of "  › " before the name column.
-const ROW_INDENT = 4;
+// Width of "› " before the name column. Rows start flush left like the editor and pi's footer; hints line up with names.
+const ROW_INDENT = 2;
 const GAP = "  ";
 
 function pad(text: string, width: number): string {

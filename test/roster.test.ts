@@ -114,15 +114,15 @@ describe("Roster", () => {
 
 	it("shows one summary line until ↓ on an empty editor opens the list", () => {
 		const ui = harness(twoChildren());
-		assert.deepEqual(ui.lines(), ["  2 running · ↓ to open"]);
+		assert.deepEqual(ui.lines(), ["2 running · ↓ to open"]);
 		ui.type("draft");
 		assert.equal(ui.press(DOWN), false);
 		ui.type("");
 		assert.equal(ui.press(DOWN), true);
 		assert.deepEqual(ui.lines(), [
-			"  › delegate  second task  running  1s",
-			"    delegate  first task   running  2s",
-			"    enter open · esc back",
+			"› delegate  second task  running  1s",
+			"  delegate  first task   running  2s",
+			"  enter open · esc back",
 		]);
 		ui.roster.dispose();
 	});
@@ -135,8 +135,8 @@ describe("Roster", () => {
 		]);
 		ui.press(DOWN);
 		assert.deepEqual(ui.lines().slice(0, 2), [
-			"  › worker    a long task text  deepseek-v4-flash   running  1m 24s   24k / 262k ctx",
-			"    reviewer  short             qwen3.8-flash-next  paused   6m 35s  210k / 1.0M ctx",
+			"› worker    a long task text  deepseek-v4-flash   running  1m 24s   24k / 262k ctx",
+			"  reviewer  short             qwen3.8-flash-next  paused   6m 35s  210k / 1.0M ctx",
 		]);
 		ui.roster.dispose();
 	});
@@ -180,11 +180,11 @@ describe("Roster", () => {
 		]);
 		ui.press(DOWN);
 		assert.equal(ui.lines().length, 2);
-		assert.equal(ui.lines()[1], "    enter open · tab 1 older · esc back");
+		assert.equal(ui.lines()[1], "  enter open · tab 1 older · esc back");
 		ui.press(TAB);
 		assert.equal(ui.lines().length, 3);
 		assert.match(ui.lines()[1] ?? "", /old task/);
-		assert.equal(ui.lines()[2], "    enter open · tab recent only · esc back");
+		assert.equal(ui.lines()[2], "  enter open · tab recent only · esc back");
 		ui.press(TAB);
 		assert.equal(ui.lines().length, 2);
 		ui.roster.dispose();
@@ -196,9 +196,9 @@ describe("Roster", () => {
 		assert.deepEqual(ui.lines(), []);
 		ui.type("half-typed message");
 		ui.roster.show();
-		assert.match(ui.lines()[0] ?? "", /^ {2}› delegate {2}old task/);
+		assert.match(ui.lines()[0] ?? "", /^› delegate {2}old task/);
 		// Nothing is recent, so there is no "recent only" to switch to.
-		assert.equal(ui.lines()[1], "    enter open · esc back");
+		assert.equal(ui.lines()[1], "  enter open · esc back");
 		assert.equal(ui.press(TAB), true);
 		assert.equal(ui.lines().length, 2);
 		assert.equal(ui.press(ESC), true);
