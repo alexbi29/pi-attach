@@ -127,6 +127,18 @@ describe("Roster", () => {
 		ui.roster.dispose();
 	});
 
+	it("puts children waiting on an answer first in the summary and names them in their row", () => {
+		const now = Date.now();
+		const ui = harness([
+			run("a", [child("running", now - 2000, { task: "busy" })]),
+			run("b", [child("running", now - 1000, { task: "stuck", waiting: "supervisor" })]),
+		]);
+		assert.deepEqual(ui.lines(), ["1 asking · 1 running · ↓ to open"]);
+		ui.press(DOWN);
+		assert.match(ui.lines()[0] ?? "", /^› delegate {2}stuck {2}asking +1s$/);
+		ui.roster.dispose();
+	});
+
 	it("lines up every column across rows", () => {
 		const now = Date.now();
 		const ui = harness([

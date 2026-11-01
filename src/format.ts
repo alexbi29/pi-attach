@@ -38,15 +38,20 @@ export function spread(left: string, right: string, width: number): string {
 	return leftText + " ".repeat(Math.max(0, width - visibleWidth(leftText) - visibleWidth(rightText))) + rightText;
 }
 
-/** pi-subagents' state as the list and the view name it: "queued" counts as running, "complete" reads "done". */
-export function stateLabel(state: string): string {
+/**
+ * pi-subagents' state as the list and the view name it: "queued" counts as running, "complete" reads "done",
+ * and a child waiting on its parent's answer ("asking") or on a slow tool ("attention") says so over its state.
+ */
+export function stateLabel(state: string, waiting?: "supervisor" | "tool"): string {
+	if (waiting === "supervisor") return "asking";
+	if (waiting === "tool") return "attention";
 	if (state === "queued") return "running";
 	if (state === "complete" || state === "completed") return "done";
 	if (state === "error") return "failed";
 	return state;
 }
 
-/** The color for a `stateLabel`: running accent, done success, failed error, anything else (paused, stopped) warning. */
+/** The color for a `stateLabel`: running accent, done success, failed error, anything else (asking, paused…) warning. */
 export function stateColor(label: string, theme: Theme): (text: string) => string {
 	const color = label === "running" ? "accent" : label === "done" ? "success" : label === "failed" ? "error" : "warning";
 	return (text) => theme.fg(color, text);

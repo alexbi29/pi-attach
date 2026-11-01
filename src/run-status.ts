@@ -24,6 +24,11 @@ export interface ChildStatus {
 	toolCount?: number;
 	startedAt?: number;
 	endedAt?: number;
+	/**
+	 * Why pi-subagents flagged the child as needing attention: it asked its parent a question and waits for
+	 * the answer ("supervisor"), or a tool has been open past pi-subagents' threshold ("tool").
+	 */
+	waiting?: "supervisor" | "tool";
 	/** The start of the child's task, from pi-subagents' session name ("delegate: Run the…"). */
 	task?: string;
 }
@@ -141,6 +146,7 @@ function childStatus(step: Record<string, unknown>): ChildStatus {
 		...optional("startedAt", number(step.startedAt)),
 		...optional("endedAt", number(step.endedAt)),
 		...optional("task", task(step)),
+		...optional("waiting", waiting(step)),
 	};
 }
 
@@ -160,6 +166,11 @@ function modelOf(step: Record<string, unknown>): { provider?: string; model?: st
 function context(tokens: Record<string, unknown>): number | undefined {
 	const window = number(tokens.window);
 	return window ? window : (number(tokens.windowPeak) ?? window);
+}
+
+function waiting(step: Record<string, unknown>): "supervisor" | "tool" | undefined {
+	if (step.activityState !== "needs_attention") return undefined;
+	return step.currentTool === "contact_supervisor" ? "supervisor" : "tool";
 }
 
 function task(step: Record<string, unknown>): string | undefined {

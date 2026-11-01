@@ -260,8 +260,11 @@ const CONSUME = { consume: true } as const;
 // "2 running · 1 done": one count per state, in the order a reader cares about.
 function summary(entries: RosterEntry[], theme: Theme): string {
 	const counts = new Map<string, number>();
-	for (const { child } of entries) counts.set(stateLabel(child.state), (counts.get(stateLabel(child.state)) ?? 0) + 1);
-	const order = ["running", "paused", "failed", "done"];
+	for (const { child } of entries) {
+		const label = stateLabel(child.state, child.waiting);
+		counts.set(label, (counts.get(label) ?? 0) + 1);
+	}
+	const order = ["asking", "attention", "running", "paused", "failed", "done"];
 	const labels = [...counts.keys()].sort((a, b) => rank(order, a) - rank(order, b));
 	return labels.map((label) => stateColor(label, theme)(`${counts.get(label)} ${label}`)).join(theme.fg("dim", " · "));
 }
@@ -289,7 +292,7 @@ function cells(entry: RosterEntry, task: string, now: number): Cells {
 		task,
 		// Without the provider: it costs width and rarely tells children apart.
 		model: child.model ?? "",
-		state: stateLabel(child.state),
+		state: stateLabel(child.state, child.waiting),
 		elapsed: child.startedAt === undefined ? "" : formatDuration(end - child.startedAt),
 		context: child.context === undefined ? "" : formatContext(child.context, child.contextLimit),
 	};

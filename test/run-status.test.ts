@@ -84,6 +84,21 @@ describe("readRunStatus", () => {
 		});
 	});
 
+	it("tells a child waiting on its parent's answer from one stuck in a slow tool", () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-attach-test-"));
+		const dir = writeRun(root, "run-5", {
+			steps: [
+				{ status: "running", activityState: "needs_attention", currentTool: "contact_supervisor" },
+				{ status: "running", activityState: "needs_attention", currentTool: "bash" },
+				{ status: "running", activityState: "active_long_running", currentTool: "bash" },
+			],
+		});
+		assert.deepEqual(
+			readRunStatus(dir, "run-5")?.children.map((child) => child.waiting),
+			["supervisor", "tool", undefined],
+		);
+	});
+
 	it("reports a paused child's context from its peak, since an interrupt zeroes the window", () => {
 		const root = mkdtempSync(join(tmpdir(), "pi-attach-test-"));
 		const dir = writeRun(root, "run-3", { steps: [{ status: "paused", tokens: { window: 0, windowPeak: 35208 } }] });

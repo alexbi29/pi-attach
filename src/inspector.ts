@@ -1,5 +1,6 @@
 // FleetView hook: an inspector plugin so Enter/H on a child opens our view instead of a terminal pane.
 import type { EventBus, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { MainActivity } from "./main-activity.ts";
 import { openView } from "./view.ts";
 
 /** Handle to undo a registration; safe to call more than once. */
@@ -11,8 +12,12 @@ export interface Registration {
  * Register with pi-subagents through its versioned event (docs/extension-api.md, "Register an external
  * inspector"). Returns undefined when pi-subagents is not loaded.
  */
-export function registerInspector(events: EventBus, getContext: () => ExtensionContext | undefined): Registration | undefined {
-	const request: RegistrationRequest = { version: 1, plugin: createPlugin(events, getContext) };
+export function registerInspector(
+	events: EventBus,
+	main: MainActivity,
+	getContext: () => ExtensionContext | undefined,
+): Registration | undefined {
+	const request: RegistrationRequest = { version: 1, plugin: createPlugin(events, main, getContext) };
 	events.emit(REGISTER_EVENT, request);
 	if (!request.result) return undefined;
 	if (!request.result.ok) throw request.result.error;
@@ -48,7 +53,7 @@ interface RegistrationRequest {
 	result?: { ok: true; registration: Registration } | { ok: false; error: Error };
 }
 
-function createPlugin(events: EventBus, getContext: () => ExtensionContext | undefined): InspectorPlugin {
+function createPlugin(events: EventBus, main: MainActivity, getContext: () => ExtensionContext | undefined): InspectorPlugin {
 	return {
 		name: "pi-attach",
 		available: () => getContext()?.mode === "tui",
@@ -59,7 +64,7 @@ function createPlugin(events: EventBus, getContext: () => ExtensionContext | und
 			if (!ctx) return result("pi-attach has no active session.", true);
 			const view = { runId: target.runId, asyncDir: target.asyncDir, index: target.index ?? 0 };
 			// Fleet awaits open(); the view stays up after it returns, stacked above Fleet's overlay.
-			void openView(view, events, ctx);
+			void openView(view, events, main, ctx);
 			return result(`Opened ${target.runId.slice(0, 8)} in this window.`);
 		},
 	};

@@ -34,13 +34,15 @@ While this session has subagents running, or finished in the last ten minutes, o
   enter open · tab 3 older · esc back
 ```
 
+A child waiting on its parent's answer (pi-subagents' `contact_supervisor`) shows as `asking`, and one whose tool has been open past pi-subagents' threshold as `attention`; both come first in the summary line.
+
 Other ways in:
 
 - `ctrl+shift+a` or `/attach` opens the same list from anywhere, even with text in the editor. When no child is recent, it opens on all of them.
 - `/subagents-fleet`: select a running child and press Enter. Inside tmux, pi-subagents' own tmux inspector takes that Enter.
 - `/attach <async run dir> [child index]` opens a run directly.
 
-The view follows the child live: text and thinking stream token by token, running tools show their output as it arrives, and the header shows the agent, its run id and task, tool count and elapsed time; the row under the editor says which subagent you are talking to and its state; and the bottom line is pi's own stats line for the child: tokens in and out, context use, and `(provider) model • thinking`. Scrolled-up content stays in place while new output arrives; sending a message jumps back to the end.
+The view follows the child live: text and thinking stream token by token, running tools show their output as it arrives, and the header shows the agent, its run id and task, tool count and elapsed time; the row under the editor says which subagent you are talking to, its state, and what the main session is doing behind the view (`main working`, or `main: 2 new` for replies and notices you have not seen); and the bottom line is pi's own stats line for the child: tokens in and out, context use, and `(provider) model • thinking`. Scrolled-up content stays in place while new output arrives; sending a message jumps back to the end.
 
 In the view:
 

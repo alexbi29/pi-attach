@@ -18,6 +18,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { type FSWatcher, watch } from "node:fs";
 import { dirname, join } from "node:path";
+import type { MainActivity } from "./main-activity.ts";
 import { formatDuration, formatTokens, shortKeyHint, spread, stateColor, stateLabel } from "./format.ts";
 import { connectLiveStream, type LiveStreamConnection, type StreamFrame } from "./live-stream.ts";
 import { interrupt, resume, steer } from "./rpc.ts";
@@ -33,9 +34,9 @@ export interface ViewTarget {
 }
 
 /** Show `target` over the main chat until the user closes it; resolves on close. */
-export async function openView(target: ViewTarget, events: EventBus, ctx: ExtensionContext): Promise<void> {
+export async function openView(target: ViewTarget, events: EventBus, main: MainActivity, ctx: ExtensionContext): Promise<void> {
 	await ctx.ui.custom<void>(
-		(tui, theme, keybindings, done) => new ChildView(tui, theme, keybindings, target, events, ctx.cwd, done),
+		(tui, theme, keybindings, done) => new ChildView(tui, theme, keybindings, target, events, main, ctx.cwd, done),
 		// Covers the whole terminal so the child reads like the main chat, not a dialog.
 		{ overlay: true, overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%", margin: 0 } },
 	);
@@ -59,6 +60,8 @@ class ChildView implements Component, Focusable {
 	private target: ViewTarget;
 	private readonly events: EventBus;
 	private readonly done: () => void;
+	private readonly main: MainActivity;
+	private readonly stopMain: () => void;
 	private readonly display: TranscriptDisplay = { toolsExpanded: false, hideThinking: false };
 	private readonly transcript: Transcript;
 	private readonly editor: Editor;
@@ -84,6 +87,7 @@ class ChildView implements Component, Focusable {
 		keybindings: KeybindingsManager,
 		target: ViewTarget,
 		events: EventBus,
+		main: MainActivity,
 		cwd: string,
 		done: () => void,
 	) {
@@ -93,6 +97,9 @@ class ChildView implements Component, Focusable {
 		this.target = target;
 		this.events = events;
 		this.done = done;
+		this.main = main;
+		main.markSeen();
+		this.stopMain = main.onChange(() => tui.requestRender());
 		this.transcript = new Transcript(tui, cwd, this.display);
 		this.editor = new Editor(tui, {
 			borderColor: (text) => theme.fg("borderMuted", text),
@@ -160,6 +167,7 @@ class ChildView implements Component, Focusable {
 	}
 
 	dispose(): void {
+		this.stopMain();
 		clearInterval(this.tick);
 		clearTimeout(this.syncTimer);
 		this.runWatcher?.close();
@@ -334,9 +342,11 @@ class ChildView implements Component, Focusable {
 	private renderStatus(width: number): string {
 		const theme = this.theme;
 		const child = this.child;
-		const state = stateLabel(child?.state ?? this.run?.state ?? "starting");
+		const state = stateLabel(child?.state ?? this.run?.state ?? "starting", child?.waiting);
 		const identity = `${theme.fg("accent", "subagent")} ${theme.bold(child?.agent ?? "subagent")} ${theme.fg("dim", "·")} ${stateColor(state, theme)(state)}`;
-		const left = this.status ? `${identity}${theme.fg("dim", ` · ${this.status}`)}` : identity;
+		const left = [identity, this.mainNote(), this.status ? theme.fg("dim", this.status) : undefined]
+			.filter((part) => part !== undefined)
+			.join(theme.fg("dim", " · "));
 		const hints = [
 			shortKeyHint("tui.input.submit", "send", theme),
 			shortKeyHint("app.clear", "interrupt", theme),
@@ -344,6 +354,13 @@ class ChildView implements Component, Focusable {
 			shortKeyHint("app.interrupt", "back to main", theme),
 		].join(theme.fg("dim", " · "));
 		return spread(left, hints, width);
+	}
+
+	// The main session is hidden behind the view; say when it is busy or has something new to read.
+	private mainNote(): string | undefined {
+		if (this.main.working) return this.theme.fg("dim", "main working");
+		if (this.main.unseen > 0) return this.theme.fg("warning", `main: ${this.main.unseen} new`);
+		return undefined;
 	}
 
 	// pi's own stats line, for the child: "↑194k ↓8.9k 9.3%/262k" left, "(intl) qwen3.8-flash-next • high" right.

@@ -5,6 +5,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { fleetViewEnabled, loadConfig } from "./config.ts";
 import { type Registration, registerInspector } from "./inspector.ts";
 import { publishLiveStream } from "./live-stream.ts";
+import { MainActivity } from "./main-activity.ts";
 import { Roster } from "./roster.ts";
 import { defaultRunsRoot, SessionRuns } from "./run-status.ts";
 import { openView } from "./view.ts";
@@ -18,16 +19,17 @@ export default function (pi: ExtensionAPI) {
 	let current: ExtensionContext | undefined;
 	let registration: Registration | undefined;
 	let roster: Roster | undefined;
+	const main = new MainActivity(pi);
 
 	pi.on("session_start", (_event, ctx) => {
 		current = ctx;
 		registration?.dispose();
-		registration = registerInspector(pi.events, () => current);
+		registration = registerInspector(pi.events, main, () => current);
 		roster?.dispose();
 		const parentSession = ctx.sessionManager.getSessionFile();
 		roster =
 			ctx.mode === "tui" && parentSession && !fleetViewEnabled()
-				? new Roster(new SessionRuns(parentSession, defaultRunsRoot()), (target) => void openView(target, pi.events, ctx), ctx)
+				? new Roster(new SessionRuns(parentSession, defaultRunsRoot()), (target) => void openView(target, pi.events, main, ctx), ctx)
 				: undefined;
 	});
 	pi.on("session_shutdown", () => {
@@ -61,7 +63,7 @@ export default function (pi: ExtensionAPI) {
 			const asyncDir = resolve(path);
 			// pi-subagents names each async run directory after its run id.
 			const target = { runId: basename(asyncDir), asyncDir, index: indexArg ? Number.parseInt(indexArg, 10) : 0 };
-			await openView(target, pi.events, ctx);
+			await openView(target, pi.events, main, ctx);
 		},
 	});
 }
