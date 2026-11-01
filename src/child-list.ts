@@ -142,9 +142,10 @@ export class ChildList {
 		if (this.rows().some((row) => rowKey(row) === key)) this.selectedKey = key;
 	}
 
-	/** Mark the child the view now shows. */
+	/** Mark the child the view now shows, and move the selection to it. */
 	setCurrent(target: ViewTarget): void {
 		this.current = targetKey(target);
+		this.selectedKey = this.current;
 	}
 
 	/** Take the latest run records; read once a second by the owner. */

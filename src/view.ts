@@ -43,8 +43,16 @@ export interface ViewServices {
 	runs: SessionRuns | undefined;
 }
 
+/** Whether the view starts with its subagent list open: it does when entered from the list, to stay in it. */
+export type ListStart = "open" | "closed";
+
 /** Show `target` over the main chat until the user closes it; resolves with the child shown last. */
-export async function openView(target: ViewTarget, services: ViewServices, ctx: ExtensionContext): Promise<ViewTarget | undefined> {
+export async function openView(
+	target: ViewTarget,
+	list: ListStart,
+	services: ViewServices,
+	ctx: ExtensionContext,
+): Promise<ViewTarget | undefined> {
 	// Start as the main chat shows things. pi saves its thinking toggle to settings on every press, so the file
 	// is current; toggles inside the view stay in the view.
 	const display: TranscriptDisplay = {
@@ -52,7 +60,7 @@ export async function openView(target: ViewTarget, services: ViewServices, ctx: 
 		hideThinking: SettingsManager.create(ctx.cwd).getHideThinkingBlock(),
 	};
 	return ctx.ui.custom<ViewTarget>(
-		(tui, theme, keybindings, done) => new ChildView(tui, theme, keybindings, target, services, display, ctx.cwd, done),
+		(tui, theme, keybindings, done) => new ChildView(tui, theme, keybindings, target, list, services, display, ctx.cwd, done),
 		// Covers the whole terminal so the child reads like the main chat, not a dialog.
 		{ overlay: true, overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%", margin: 0 } },
 	);
@@ -105,6 +113,7 @@ class ChildView implements Component, Focusable {
 		theme: Theme,
 		keybindings: KeybindingsManager,
 		target: ViewTarget,
+		listStart: ListStart,
 		services: ViewServices,
 		display: TranscriptDisplay,
 		cwd: string,
@@ -130,6 +139,8 @@ class ChildView implements Component, Focusable {
 		});
 		this.editor.onSubmit = (text) => this.submit(text);
 		this.sync();
+		// The first sync gave the list its rows, so it can open now.
+		if (listStart === "open") this.list?.open();
 		this.runWatcher = this.watch(target.asyncDir);
 		this.tick = setInterval(() => this.sync(), TICK_MS);
 	}
@@ -340,10 +351,10 @@ class ChildView implements Component, Focusable {
 		this.tui.requestRender();
 	}
 
-	// Another child replaces this one in place: the view is reused, not stacked.
+	// Another child replaces this one in place: the view is reused, not stacked. The list stays open on it,
+	// so the next hop is one more ↓ or ↑; Esc or Enter on it closes the list to talk to that child.
 	private switchTo(list: ChildList, target: ViewTarget): void {
 		list.setCurrent(target);
-		list.close();
 		this.transcript.reset();
 		this.watchedSessionFile = undefined;
 		this.sessionWatcher?.close();

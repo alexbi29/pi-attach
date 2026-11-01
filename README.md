@@ -36,7 +36,7 @@ While this session has subagents running, or finished in the last ten minutes, o
 
 A child waiting on its parent's answer (pi-subagents' `contact_supervisor`) shows as `asking`, and one whose tool has been open past pi-subagents' threshold as `attention`; both come first in the summary line.
 
-Inside a child's view, `↓` on an empty editor opens the same list with a `main` row on top: Enter on another child switches the view to it, Enter on `main` (or Esc in the view) goes back to the main session, with the list's cursor on the child you viewed last. The row under the editor also names other children waiting on an answer.
+Inside a child's view the same list sits under the editor with a `main` row on top. It is already open when you came from the list (start typing to talk to the child; `↓` on an empty editor opens it again). Enter on another child switches the view to it and keeps the list open, Enter on `main` (or Esc in the view) goes back to the main session, with the list's cursor on the child you viewed last. The row under the editor also names other children waiting on an answer.
 
 Other ways in:
 

@@ -95,6 +95,10 @@ describe("ChildList in the child view", () => {
 		list.open();
 		list.select("other:0");
 		assert.deepEqual(list.handleKey(ENTER), { kind: "open", target: { runId: "other", asyncDir: "/runs/other", index: 0 } });
+		// The view switches and keeps the list open: the new child is now current and selected.
+		list.setCurrent({ runId: "other", asyncDir: "/runs/other", index: 0 });
+		assert.equal(list.isOpen, true);
+		assert.match(list.render(100, plainTheme).find((line) => line.startsWith("›")) ?? "", /another child/);
 		list.select("main");
 		assert.deepEqual(list.handleKey(ENTER), { kind: "main" });
 	});
