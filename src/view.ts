@@ -41,6 +41,8 @@ export interface ViewServices {
 	main: MainActivity;
 	/** This session's runs, for the list inside the view; absent for an unsaved session. */
 	runs: SessionRuns | undefined;
+	/** pi-subagents' long tool call threshold, for reading the shown child's run record. */
+	longToolMs: number;
 }
 
 /** Whether the view starts with its subagent list open: it does when entered from the list, to stay in it. */
@@ -86,7 +88,9 @@ class ChildView implements Component, Focusable {
 	private readonly done: (shown: ViewTarget) => void;
 	private readonly main: MainActivity;
 	private readonly runs: SessionRuns | undefined;
-	// The same list as under the main editor, plus a "main" row; ↓ on an empty editor opens it.
+	private readonly longToolMs: number;
+	// The same list as under the main editor, always on screen here so main and the other children are one
+	// hop away; ↓ on an empty editor moves the cursor into it.
 	private readonly list: ChildList | undefined;
 	private readonly stopMain: () => void;
 	private readonly display: TranscriptDisplay;
@@ -125,7 +129,8 @@ class ChildView implements Component, Focusable {
 		this.target = target;
 		this.events = services.events;
 		this.runs = services.runs;
-		this.list = services.runs ? new ChildList("view") : undefined;
+		this.longToolMs = services.longToolMs;
+		this.list = services.runs ? new ChildList() : undefined;
 		this.list?.setCurrent(target);
 		this.done = done;
 		this.main = services.main;
@@ -157,7 +162,7 @@ class ChildView implements Component, Focusable {
 	render(width: number): string[] {
 		const rows = this.tui.terminal.rows;
 		const editorLines = this.editor.render(width);
-		const listLines = this.list?.isOpen ? this.list.render(width, this.theme) : [];
+		const listLines = this.list ? this.list.render(width, this.theme) : [];
 		this.transcriptRows = Math.max(1, rows - HEADER_ROWS - STATUS_ROWS - editorLines.length - listLines.length);
 		const body = this.transcript.render(width);
 		// Keep the lines the user scrolled to in place while new output arrives below them.
@@ -244,7 +249,7 @@ class ChildView implements Component, Focusable {
 	// Re-read the run record and the session file; render when either changed or the header clock runs.
 	private sync(): void {
 		const previous = JSON.stringify(this.run);
-		this.run = readRunStatus(this.target.asyncDir, this.target.runId) ?? this.run;
+		this.run = readRunStatus(this.target.asyncDir, this.target.runId, this.longToolMs) ?? this.run;
 		let changed = JSON.stringify(this.run) !== previous;
 		const sessionFile = this.child?.sessionFile;
 		try {
@@ -268,8 +273,8 @@ class ChildView implements Component, Focusable {
 		}
 		this.connectLive();
 		if (this.runs) this.list?.update(this.runs.list(), Date.now());
-		// The list's times and states move every tick while it is open.
-		if (changed || this.run?.endedAt === undefined || this.list?.isOpen) this.tui.requestRender();
+		// The list's times and states move every tick.
+		if (changed || this.run?.endedAt === undefined || this.list) this.tui.requestRender();
 	}
 
 	// The child opens its socket at session start; until then (and after it ends) each tick retries.

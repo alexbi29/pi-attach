@@ -2,7 +2,7 @@
 import { existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { fleetViewEnabled, loadConfig } from "./config.ts";
+import { fleetViewEnabled, loadConfig, longToolAfterMs } from "./config.ts";
 import { type Registration, registerInspector } from "./inspector.ts";
 import { publishLiveStream } from "./live-stream.ts";
 import { MainActivity } from "./main-activity.ts";
@@ -21,9 +21,11 @@ export default function (pi: ExtensionAPI) {
 	let roster: Roster | undefined;
 	// This session's runs, shared by the list under the editor and the one in the view.
 	let runs: SessionRuns | undefined;
+	// pi-subagents' long tool call threshold, read again at every session start like its other settings.
+	let longToolMs = longToolAfterMs();
 	const main = new MainActivity(pi);
 	const open = (target: ViewTarget, list: ListStart, ctx: ExtensionContext) =>
-		openView(target, list, { events: pi.events, main, runs }, ctx);
+		openView(target, list, { events: pi.events, main, runs, longToolMs }, ctx);
 
 	pi.on("session_start", (_event, ctx) => {
 		current = ctx;
@@ -31,7 +33,8 @@ export default function (pi: ExtensionAPI) {
 		registration = registerInspector(pi.events, (target, ctx) => open(target, "closed", ctx), () => current);
 		roster?.dispose();
 		const parentSession = ctx.sessionManager.getSessionFile();
-		runs = parentSession ? new SessionRuns(parentSession, defaultRunsRoot()) : undefined;
+		longToolMs = longToolAfterMs();
+		runs = parentSession ? new SessionRuns(parentSession, defaultRunsRoot(), longToolMs) : undefined;
 		roster = ctx.mode === "tui" && runs && !fleetViewEnabled() ? new Roster(runs, (target) => open(target, "open", ctx), ctx) : undefined;
 	});
 	pi.on("session_shutdown", () => {

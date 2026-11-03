@@ -25,8 +25,8 @@ export interface ChildStatus {
 	startedAt?: number;
 	endedAt?: number;
 	/**
-	 * Why pi-subagents flagged the child as needing attention: it asked its parent a question and waits for
-	 * the answer ("supervisor"), or a tool has been open past pi-subagents' threshold ("tool").
+	 * What the child waits on: its parent's answer to a question ("supervisor"), or a tool call that is still
+	 * open past pi-subagents' threshold ("tool").
 	 */
 	waiting?: "supervisor" | "tool";
 	/** The start of the child's task, from pi-subagents' session name ("delegate: Run the…"). */
@@ -44,8 +44,11 @@ export interface RunStatus {
 	children: ChildStatus[];
 }
 
-/** Parse `<asyncDir>/status.json`; undefined while the runner has not written it yet. */
-export function readRunStatus(asyncDir: string, runId: string): RunStatus | undefined {
+/**
+ * Parse `<asyncDir>/status.json`; undefined while the runner has not written it yet. `longToolMs` is
+ * pi-subagents' threshold for a long tool call (`longToolAfterMs()`).
+ */
+export function readRunStatus(asyncDir: string, runId: string, longToolMs: number): RunStatus | undefined {
 	let raw: unknown;
 	try {
 		raw = JSON.parse(readFileSync(join(asyncDir, "status.json"), "utf-8"));
@@ -55,6 +58,7 @@ export function readRunStatus(asyncDir: string, runId: string): RunStatus | unde
 	// status.json is pi-subagents' internal record: read the documented-in-practice fields defensively.
 	const status = record(raw);
 	const steps = Array.isArray(status.steps) ? status.steps : [];
+	const now = Date.now();
 	return {
 		runId,
 		asyncDir,
@@ -62,7 +66,7 @@ export function readRunStatus(asyncDir: string, runId: string): RunStatus | unde
 		...optional("parentSession", text(status.sessionId)),
 		...optional("startedAt", number(status.startedAt)),
 		...optional("endedAt", number(status.endedAt)),
-		children: steps.map((step) => childStatus(record(step))),
+		children: steps.map((step) => childStatus(record(step), longToolMs, now)),
 	};
 }
 
@@ -73,12 +77,14 @@ export function readRunStatus(asyncDir: string, runId: string): RunStatus | unde
 export class SessionRuns {
 	private readonly parentSession: string;
 	private readonly runsRoot: string;
+	private readonly longToolMs: number;
 	// Settled run ids: the final status of this session's finished runs, undefined for other sessions' runs.
 	private readonly settled = new Map<string, RunStatus | undefined>();
 
-	constructor(parentSession: string, runsRoot: string) {
+	constructor(parentSession: string, runsRoot: string, longToolMs: number) {
 		this.parentSession = parentSession;
 		this.runsRoot = runsRoot;
+		this.longToolMs = longToolMs;
 	}
 
 	/** This session's runs, in directory order. */
@@ -97,7 +103,7 @@ export class SessionRuns {
 				continue;
 			}
 			// Undefined until the runner has written status.json; try again next time.
-			const run = readRunStatus(join(this.runsRoot, id), id);
+			const run = readRunStatus(join(this.runsRoot, id), id, this.longToolMs);
 			if (!run) continue;
 			if (run.parentSession !== this.parentSession) {
 				// A status written before its session id is known may still turn out to be ours.
@@ -130,7 +136,7 @@ function tempScope(): string {
 	return `user-${name.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "unknown"}`;
 }
 
-function childStatus(step: Record<string, unknown>): ChildStatus {
+function childStatus(step: Record<string, unknown>, longToolMs: number, now: number): ChildStatus {
 	const tokens = record(step.tokens);
 	return {
 		agent: text(step.agent) ?? "subagent",
@@ -146,7 +152,7 @@ function childStatus(step: Record<string, unknown>): ChildStatus {
 		...optional("startedAt", number(step.startedAt)),
 		...optional("endedAt", number(step.endedAt)),
 		...optional("task", task(step)),
-		...optional("waiting", waiting(step)),
+		...optional("waiting", waiting(step, longToolMs, now)),
 	};
 }
 
@@ -168,9 +174,14 @@ function context(tokens: Record<string, unknown>): number | undefined {
 	return window ? window : (number(tokens.windowPeak) ?? window);
 }
 
-function waiting(step: Record<string, unknown>): "supervisor" | "tool" | undefined {
+// pi-subagents sets "needs_attention" when a tool call passes its threshold, and clears it only when the
+// child stops, pauses or ends, not when that call returns. So the flag counts only while the call open now
+// has itself been open that long; a child whose long call already returned reads as running.
+function waiting(step: Record<string, unknown>, longToolMs: number, now: number): "supervisor" | "tool" | undefined {
 	if (step.activityState !== "needs_attention") return undefined;
-	return step.currentTool === "contact_supervisor" ? "supervisor" : "tool";
+	if (step.currentTool === "contact_supervisor") return "supervisor";
+	const startedAt = number(step.currentToolStartedAt);
+	return text(step.currentTool) && startedAt !== undefined && now - startedAt >= longToolMs ? "tool" : undefined;
 }
 
 function task(step: Record<string, unknown>): string | undefined {

@@ -46,11 +46,11 @@ export function spread(left: string, right: string, width: number): string {
 
 /**
  * pi-subagents' state as the list and the view name it: "queued" counts as running, "complete" reads "done",
- * and a child waiting on its parent's answer ("asking") or on a slow tool ("attention") says so over its state.
+ * and a child waiting on its parent's answer ("asking") or on a long tool call ("long tool") says so over its state.
  */
 export function stateLabel(state: string, waiting?: "supervisor" | "tool"): string {
 	if (waiting === "supervisor") return "asking";
-	if (waiting === "tool") return "attention";
+	if (waiting === "tool") return "long tool";
 	if (state === "queued") return "running";
 	if (state === "complete" || state === "completed") return "done";
 	if (state === "error") return "failed";

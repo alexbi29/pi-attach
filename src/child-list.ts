@@ -1,4 +1,4 @@
-// The subagent list itself: rows, selection, scope and keys. Drawn under the main editor and inside the child view.
+// The subagent list itself: a "main" row and the children, selection, scope and keys. Drawn under the main editor and inside the child view.
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { contextColor, formatContext, formatDuration, shortKeyHint, stateColor, stateLabel } from "./format.ts";
@@ -23,11 +23,8 @@ export type ListKeyResult =
 	// The list closed and the key belongs to the editor (typing leaves the list).
 	| { kind: "passed" }
 	| { kind: "open"; target: ViewTarget }
-	// The "main" row of a list inside the child view.
+	// Enter on the "main" row while a child is shown: back to the main session.
 	| { kind: "main" };
-
-/** Where a list lives: under the main editor, or inside the child view, where a "main" row leads back. */
-export type ListPlace = "main" | "view";
 
 /** The list key of a child: its run id and index. */
 export function targetKey(target: ViewTarget): string {
@@ -73,7 +70,7 @@ export function summary(entries: RosterEntry[], theme: Theme): string {
 		const label = stateLabel(child.state, child.waiting);
 		counts.set(label, (counts.get(label) ?? 0) + 1);
 	}
-	const order = ["asking", "attention", "running", "paused", "failed", "done"];
+	const order = ["asking", "long tool", "running", "paused", "failed", "done"];
 	const labels = [...counts.keys()].sort((a, b) => rank(order, a) - rank(order, b));
 	return labels.map((label) => stateColor(label, theme)(`${counts.get(label)} ${label}`)).join(theme.fg("dim", " · "));
 }
@@ -105,27 +102,25 @@ function rank(order: string[], label: string): number {
 // Which children the open list shows; it always opens on "recent" unless only older ones exist.
 type Scope = "recent" | "all";
 
-// A list row: the way back to the main session (inside the child view only) or a child.
+// A list row: the main session, always first, or a child.
 type Row = { kind: "main" } | { kind: "child"; entry: RosterEntry };
 
 const MAIN_KEY = "main";
 
-/** The list's state for one place; the owner feeds it run records and draws what it renders. */
+/**
+ * The list's state for one place; the owner feeds it run records and draws what it renders. The row on
+ * screen is "current": "main" under the main editor, the shown child inside the view.
+ */
 export class ChildList {
-	private readonly place: ListPlace;
 	// Task lines by session file: a child's task never changes, so its file is read once.
 	private readonly tasks = new Map<string, string>();
 	private all: RosterEntry[] = [];
 	private recent: RosterEntry[] = [];
 	private scope: Scope = "recent";
 	private selectedKey: string | undefined;
-	// The child the view shows; it stays listed even when it is no longer recent.
-	private current: string | undefined;
+	// A shown child stays listed even when it is no longer recent.
+	private current = MAIN_KEY;
 	private openValue = false;
-
-	constructor(place: ListPlace) {
-		this.place = place;
-	}
 
 	/** Whether ↑↓ move the selection instead of the editor cursor. */
 	get isOpen(): boolean {
@@ -157,17 +152,18 @@ export class ChildList {
 			const task = readTask(child.sessionFile);
 			if (task) this.tasks.set(child.sessionFile, task);
 		}
-		const rows = this.rows();
-		if (rows.length === 0) this.close();
-		else if (!rows.some((row) => rowKey(row) === this.selectedKey)) this.selectedKey = rowKey(rows[0] as Row);
+		if (this.all.length === 0) this.close();
+		else if (!this.rows().some((row) => rowKey(row) === this.selectedKey)) this.selectedKey = this.firstChildKey();
 	}
 
-	/** Open on recent children (all of them when none is recent), with the current child or the first row selected. */
+	/**
+	 * Open on recent children (all of them when none is recent), the shown child selected, or the first child
+	 * under the main editor. False when there is no child to list.
+	 */
 	open(): boolean {
-		this.scope = this.recent.length > 0 || this.place === "view" ? "recent" : "all";
-		const rows = this.rows();
-		if (rows.length === 0) return false;
-		this.selectedKey = rows.some((row) => rowKey(row) === this.current) ? this.current : rowKey(rows[0] as Row);
+		if (this.all.length === 0) return false;
+		this.scope = this.recent.length > 0 ? "recent" : "all";
+		this.selectedKey = this.current === MAIN_KEY ? this.firstChildKey() : this.current;
 		this.openValue = true;
 		return true;
 	}
@@ -201,10 +197,13 @@ export class ChildList {
 		return { kind: "consumed" };
 	}
 
-	/** The open list: one row per child (plus "main" in the view) and a hint line. */
+	/**
+	 * The "main" row and one row per child. Open, the list adds the cursor and a hint line; closed (the view
+	 * keeps it on screen), it scrolls to the current row.
+	 */
 	render(width: number, theme: Theme): string[] {
 		const rows = this.rows();
-		const index = this.selectedIndex(rows);
+		const index = this.openValue ? this.selectedIndex(rows) : Math.max(0, rows.findIndex((row) => rowKey(row) === this.current));
 		const start = index < MAX_ROWS ? 0 : index - MAX_ROWS + 1;
 		const now = Date.now();
 		// Column widths come from every row, not just the visible ones, so scrolling never shifts them.
@@ -212,9 +211,11 @@ export class ChildList {
 		const widths = columnWidths(table, width);
 		const visible = table.slice(start, start + MAX_ROWS).map((rowCells, offset) => {
 			const row = rows[start + offset] as Row;
-			return renderRow(rowCells, { selected: start + offset === index, current: rowKey(row) === this.current }, widths, width, theme);
+			const selected = this.openValue && start + offset === index;
+			return renderRow(rowCells, { selected, current: rowKey(row) === this.current }, widths, width, theme);
 		});
 		const hidden = rows.length - visible.length;
+		if (!this.openValue) return hidden > 0 ? [...visible, theme.fg("dim", `  ${hidden} more`)] : visible;
 		const older = this.all.length - this.recent.length;
 		const hints = [
 			shortKeyHint("tui.select.confirm", "open", theme),
@@ -230,26 +231,27 @@ export class ChildList {
 	}
 
 	private rows(): Row[] {
-		const children = this.entries().map((entry): Row => ({ kind: "child", entry }));
-		return this.place === "view" ? [{ kind: "main" }, ...children] : children;
+		return [{ kind: "main" }, ...this.entries().map((entry): Row => ({ kind: "child", entry }))];
+	}
+
+	private firstChildKey(): string {
+		return this.entries()[0]?.key ?? MAIN_KEY;
 	}
 
 	private confirm(row: Row | undefined): ListKeyResult {
 		if (!row) return { kind: "consumed" };
-		if (row.kind === "main") return { kind: "main" };
-		// Enter on the child already shown just closes the list.
-		if (row.entry.key === this.current) {
+		// Enter on the row already on screen just closes the list.
+		if (rowKey(row) === this.current) {
 			this.close();
 			return { kind: "consumed" };
 		}
-		return { kind: "open", target: row.entry.target };
+		return row.kind === "main" ? { kind: "main" } : { kind: "open", target: row.entry.target };
 	}
 
 	private toggleScope(): void {
 		if (!this.canToggle()) return;
 		this.scope = this.scope === "all" ? "recent" : "all";
-		const rows = this.rows();
-		if (!rows.some((row) => rowKey(row) === this.selectedKey)) this.selectedKey = rowKey(rows[0] as Row);
+		if (!this.rows().some((row) => rowKey(row) === this.selectedKey)) this.selectedKey = this.firstChildKey();
 	}
 
 	// "all" needs older children to add anything; "recent" needs at least one row to show.

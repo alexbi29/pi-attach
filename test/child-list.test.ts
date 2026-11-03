@@ -68,7 +68,7 @@ describe("ChildList in the child view", () => {
 		run("other", [child("running", NOW - MINUTE, { task: "another child", waiting: "supervisor" })]),
 	];
 	const viewList = () => {
-		const list = new ChildList("view");
+		const list = new ChildList();
 		list.setCurrent({ runId: "here", asyncDir: "/runs/here", index: 0 });
 		list.update(runs(), NOW);
 		return list;
@@ -101,6 +101,14 @@ describe("ChildList in the child view", () => {
 		assert.match(list.render(100, plainTheme).find((line) => line.startsWith("›")) ?? "", /another child/);
 		list.select("main");
 		assert.deepEqual(list.handleKey(ENTER), { kind: "main" });
+	});
+
+	it("stays drawn when closed: every row, the shown child marked, no cursor and no hints", () => {
+		const list = viewList();
+		const lines = list.render(100, plainTheme).map((line) => line.trimEnd());
+		assert.equal(lines.length, 3);
+		assert.ok(lines.every((line) => line.startsWith("  ")));
+		assert.match(lines[2] ?? "", /the one on screen/);
 	});
 
 	it("hands typing back to the editor", () => {

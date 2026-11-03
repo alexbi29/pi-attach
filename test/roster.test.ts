@@ -76,31 +76,34 @@ describe("Roster", () => {
 		run("b", [child("running", Date.now() - 1000, { task: "second task" })]),
 	];
 
-	it("shows one summary line until ↓ on an empty editor opens the list", () => {
+	it("shows one summary line until ↓ on an empty editor opens the list on its first child, under main", () => {
 		const ui = harness(twoChildren());
 		assert.deepEqual(ui.lines(), ["2 running · ↓ to open"]);
 		ui.type("draft");
 		assert.equal(ui.press(DOWN), false);
 		ui.type("");
 		assert.equal(ui.press(DOWN), true);
-		// The longest task plus its 10-column margin: the task column is exactly that wide.
-		assert.deepEqual(ui.lines(46), [
-			"› delegate  second task            running  1s",
-			"  delegate  first task             running  2s",
+		// The longest task ("the main session") plus its 10-column margin: the task column is exactly that wide.
+		assert.deepEqual(ui.lines(51), [
+			"  main      the main session",
+			"› delegate  second task                 running  1s",
+			"  delegate  first task                  running  2s",
 			"  enter open · esc back",
 		]);
 		ui.roster.dispose();
 	});
 
-	it("puts children waiting on an answer first in the summary and names them in their row", () => {
+	it("puts children waiting on an answer or a long tool call first in the summary and names them in their row", () => {
 		const now = Date.now();
 		const ui = harness([
-			run("a", [child("running", now - 2000, { task: "busy" })]),
+			run("a", [child("running", now - 3000, { task: "busy" })]),
+			run("c", [child("running", now - 2000, { task: "slow", waiting: "tool" })]),
 			run("b", [child("running", now - 1000, { task: "stuck", waiting: "supervisor" })]),
 		]);
-		assert.deepEqual(ui.lines(), ["1 asking · 1 running · ↓ to open"]);
+		assert.deepEqual(ui.lines(), ["1 asking · 1 long tool · 1 running · ↓ to open"]);
 		ui.press(DOWN);
-		assert.match(ui.lines()[0] ?? "", /^› delegate {2}stuck +asking +1s$/);
+		assert.match(ui.lines()[1] ?? "", /^› delegate {2}stuck +asking +1s$/);
+		assert.match(ui.lines()[2] ?? "", /^ {2}delegate {2}slow +long tool +2s$/);
 		ui.roster.dispose();
 	});
 
@@ -109,7 +112,7 @@ describe("Roster", () => {
 		ui.press(DOWN);
 		ui.press(ENTER);
 		await ui.closeView({ runId: "a", asyncDir: "/runs/a", index: 0 });
-		assert.match(ui.lines()[1] ?? "", /^› delegate {2}first task/);
+		assert.match(ui.lines()[2] ?? "", /^› delegate {2}first task/);
 		ui.roster.dispose();
 	});
 
@@ -120,7 +123,7 @@ describe("Roster", () => {
 			run("b", [child("paused", now - 395_000, { agent: "reviewer", task: "short", model: "qwen3.8-flash-next", endedAt: now, context: 210_488, contextLimit: 1_000_000 })]),
 		]);
 		ui.press(DOWN);
-		assert.deepEqual(ui.lines(92).slice(0, 2), [
+		assert.deepEqual(ui.lines(92).slice(1, 3), [
 			"› worker    a long task text            deepseek-v4-flash   running  1m 24s   24k / 262k ctx",
 			"  reviewer  short                       qwen3.8-flash-next  paused   6m 35s  210k / 1.0M ctx",
 		]);
@@ -135,7 +138,7 @@ describe("Roster", () => {
 		]);
 		ui.press(DOWN);
 		for (const width of [60, 150]) {
-			const rows = ui.lines(width).slice(0, 2);
+			const rows = ui.lines(width).slice(1, 3);
 			assert.deepEqual(
 				rows.map((row) => visibleWidth(row)),
 				[width, width],
@@ -157,18 +160,20 @@ describe("Roster", () => {
 		// Keys typed into the view are the view's: the list neither moves nor closes.
 		assert.equal(ui.press(ESC), false);
 		await ui.closeView();
-		assert.match(ui.lines()[1] ?? "", /^› delegate {2}first task/);
+		assert.match(ui.lines()[2] ?? "", /^› delegate {2}first task/);
 		assert.equal(ui.press(ESC), true);
 		assert.equal(ui.lines().length, 1);
 		ui.roster.dispose();
 	});
 
-	it("hands keys back to the editor on Esc, on ↑ from the first row and on typing", () => {
+	it("hands keys back to the editor on Esc, on ↑ from the main row and on typing", () => {
 		const ui = harness(twoChildren());
 		ui.press(DOWN);
 		assert.equal(ui.press(ESC), true);
 		assert.equal(ui.lines().length, 1);
 		ui.press(DOWN);
+		assert.equal(ui.press(UP), true);
+		assert.match(ui.lines()[0] ?? "", /^› main/);
 		assert.equal(ui.press(UP), true);
 		assert.equal(ui.lines().length, 1);
 		ui.press(DOWN);
@@ -191,14 +196,14 @@ describe("Roster", () => {
 			run("old", [child("complete", now - 3 * 60 * MINUTE, { task: "old task", endedAt: now - 2 * 60 * MINUTE })]),
 		]);
 		ui.press(DOWN);
-		assert.equal(ui.lines().length, 2);
-		assert.equal(ui.lines()[1], "  enter open · tab 1 older · esc back");
+		assert.equal(ui.lines().length, 3);
+		assert.equal(ui.lines()[2], "  enter open · tab 1 older · esc back");
+		ui.press(TAB);
+		assert.equal(ui.lines().length, 4);
+		assert.match(ui.lines()[2] ?? "", /old task/);
+		assert.equal(ui.lines()[3], "  enter open · tab recent only · esc back");
 		ui.press(TAB);
 		assert.equal(ui.lines().length, 3);
-		assert.match(ui.lines()[1] ?? "", /old task/);
-		assert.equal(ui.lines()[2], "  enter open · tab recent only · esc back");
-		ui.press(TAB);
-		assert.equal(ui.lines().length, 2);
 		ui.roster.dispose();
 	});
 
@@ -208,13 +213,23 @@ describe("Roster", () => {
 		assert.deepEqual(ui.lines(), []);
 		ui.type("half-typed message");
 		ui.roster.show();
-		assert.match(ui.lines()[0] ?? "", /^› delegate {2}old task/);
+		assert.match(ui.lines()[1] ?? "", /^› delegate {2}old task/);
 		// Nothing is recent, so there is no "recent only" to switch to.
-		assert.equal(ui.lines()[1], "  enter open · esc back");
+		assert.equal(ui.lines()[2], "  enter open · esc back");
 		assert.equal(ui.press(TAB), true);
-		assert.equal(ui.lines().length, 2);
+		assert.equal(ui.lines().length, 3);
 		assert.equal(ui.press(ESC), true);
 		assert.deepEqual(ui.lines(), []);
+		ui.roster.dispose();
+	});
+
+	it("closes the list on Enter on the main row, the session already on screen", () => {
+		const ui = harness(twoChildren());
+		ui.press(DOWN);
+		ui.press(UP);
+		assert.equal(ui.press(ENTER), true);
+		assert.deepEqual(ui.opened, []);
+		assert.equal(ui.lines().length, 1);
 		ui.roster.dispose();
 	});
 

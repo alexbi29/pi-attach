@@ -6,6 +6,9 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { readRunStatus, SessionRuns } from "../src/run-status.ts";
 
+// pi-subagents' default long tool call threshold.
+const LONG_TOOL_MS = 240_000;
+
 function writeRun(root: string, runId: string, status: Record<string, unknown>): string {
 	const dir = join(root, runId);
 	mkdirSync(dir, { recursive: true });
@@ -35,7 +38,7 @@ describe("readRunStatus", () => {
 				},
 			],
 		});
-		assert.deepEqual(readRunStatus(dir, "run-1"), {
+		assert.deepEqual(readRunStatus(dir, "run-1", LONG_TOOL_MS), {
 			runId: "run-1",
 			asyncDir: dir,
 			state: "running",
@@ -64,19 +67,19 @@ describe("readRunStatus", () => {
 	it("prefers the resolved model over the requested one", () => {
 		const root = mkdtempSync(join(tmpdir(), "pi-attach-test-"));
 		const dir = writeRun(root, "run-4", { steps: [{ model: "epyc/auto", resolvedModel: { provider: "intl", model: "qwen3.8-flash-next" } }] });
-		const child = readRunStatus(dir, "run-4")?.children[0];
+		const child = readRunStatus(dir, "run-4", LONG_TOOL_MS)?.children[0];
 		assert.deepEqual([child?.provider, child?.model], ["intl", "qwen3.8-flash-next"]);
 	});
 
 	it("returns undefined before the runner writes status.json", () => {
 		const root = mkdtempSync(join(tmpdir(), "pi-attach-test-"));
-		assert.equal(readRunStatus(join(root, "missing"), "missing"), undefined);
+		assert.equal(readRunStatus(join(root, "missing"), "missing", LONG_TOOL_MS), undefined);
 	});
 
 	it("drops fields with unexpected types instead of passing them on", () => {
 		const root = mkdtempSync(join(tmpdir(), "pi-attach-test-"));
 		const dir = writeRun(root, "run-2", { state: 7, steps: [{ agent: 1, tokens: "many" }] });
-		assert.deepEqual(readRunStatus(dir, "run-2"), {
+		assert.deepEqual(readRunStatus(dir, "run-2", LONG_TOOL_MS), {
 			runId: "run-2",
 			asyncDir: dir,
 			state: "unknown",
@@ -84,25 +87,44 @@ describe("readRunStatus", () => {
 		});
 	});
 
-	it("tells a child waiting on its parent's answer from one stuck in a slow tool", () => {
+	it("tells a child waiting on its parent's answer from one in a long tool call", () => {
 		const root = mkdtempSync(join(tmpdir(), "pi-attach-test-"));
+		const now = Date.now();
 		const dir = writeRun(root, "run-5", {
 			steps: [
 				{ status: "running", activityState: "needs_attention", currentTool: "contact_supervisor" },
-				{ status: "running", activityState: "needs_attention", currentTool: "bash" },
-				{ status: "running", activityState: "active_long_running", currentTool: "bash" },
+				{ status: "running", activityState: "needs_attention", currentTool: "bash", currentToolStartedAt: now - LONG_TOOL_MS - 1000 },
+				// Not yet past the threshold: pi-subagents would not flag it either.
+				{ status: "running", activityState: "active_long_running", currentTool: "bash", currentToolStartedAt: now - LONG_TOOL_MS - 1000 },
 			],
 		});
 		assert.deepEqual(
-			readRunStatus(dir, "run-5")?.children.map((child) => child.waiting),
+			readRunStatus(dir, "run-5", LONG_TOOL_MS)?.children.map((child) => child.waiting),
 			["supervisor", "tool", undefined],
+		);
+	});
+
+	it("reads a child as running once its long tool call returned, although pi-subagents keeps the flag", () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-attach-test-"));
+		const now = Date.now();
+		const dir = writeRun(root, "run-6", {
+			steps: [
+				// The long call returned and nothing is open.
+				{ status: "running", activityState: "needs_attention" },
+				// The long call returned and a short one is open now.
+				{ status: "running", activityState: "needs_attention", currentTool: "bash", currentToolStartedAt: now - 15_000 },
+			],
+		});
+		assert.deepEqual(
+			readRunStatus(dir, "run-6", LONG_TOOL_MS)?.children.map((child) => child.waiting),
+			[undefined, undefined],
 		);
 	});
 
 	it("reports a paused child's context from its peak, since an interrupt zeroes the window", () => {
 		const root = mkdtempSync(join(tmpdir(), "pi-attach-test-"));
 		const dir = writeRun(root, "run-3", { steps: [{ status: "paused", tokens: { window: 0, windowPeak: 35208 } }] });
-		assert.equal(readRunStatus(dir, "run-3")?.children[0]?.context, 35208);
+		assert.equal(readRunStatus(dir, "run-3", LONG_TOOL_MS)?.children[0]?.context, 35208);
 	});
 });
 
@@ -112,18 +134,18 @@ describe("SessionRuns", () => {
 		writeRun(root, "mine", { sessionId: "/mine.jsonl", steps: [] });
 		writeRun(root, "other", { sessionId: "/theirs.jsonl", steps: [] });
 		mkdirSync(join(root, "no-status"));
-		assert.deepEqual(Object.keys(states(new SessionRuns("/mine.jsonl", root))), ["mine"]);
+		assert.deepEqual(Object.keys(states(new SessionRuns("/mine.jsonl", root, LONG_TOOL_MS))), ["mine"]);
 	});
 
 	it("returns nothing when the runs directory does not exist", () => {
-		assert.deepEqual(new SessionRuns("/mine.jsonl", join(tmpdir(), "pi-attach-no-such-dir")).list(), []);
+		assert.deepEqual(new SessionRuns("/mine.jsonl", join(tmpdir(), "pi-attach-no-such-dir"), LONG_TOOL_MS).list(), []);
 	});
 
 	it("re-reads in-flight runs and keeps a finished run's last status", () => {
 		const root = mkdtempSync(join(tmpdir(), "pi-attach-test-"));
 		writeRun(root, "live", { state: "running", sessionId: "/mine.jsonl", steps: [] });
 		writeRun(root, "done", { state: "complete", sessionId: "/mine.jsonl", steps: [] });
-		const runs = new SessionRuns("/mine.jsonl", root);
+		const runs = new SessionRuns("/mine.jsonl", root, LONG_TOOL_MS);
 		assert.deepEqual(states(runs), { done: "complete", live: "running" });
 		writeRun(root, "live", { state: "complete", sessionId: "/mine.jsonl", steps: [] });
 		// A finished run never changes, so a rewrite of its file is not read.
@@ -134,7 +156,7 @@ describe("SessionRuns", () => {
 	it("picks up a run whose status was written without its session at first", () => {
 		const root = mkdtempSync(join(tmpdir(), "pi-attach-test-"));
 		writeRun(root, "new", { state: "running", steps: [] });
-		const runs = new SessionRuns("/mine.jsonl", root);
+		const runs = new SessionRuns("/mine.jsonl", root, LONG_TOOL_MS);
 		assert.deepEqual(states(runs), {});
 		writeRun(root, "new", { state: "running", sessionId: "/mine.jsonl", steps: [] });
 		assert.deepEqual(states(runs), { new: "running" });

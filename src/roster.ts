@@ -14,7 +14,7 @@ export class Roster {
 	private readonly ctx: ExtensionContext;
 	private readonly timer: NodeJS.Timeout;
 	private readonly stopInput: () => void;
-	private readonly list = new ChildList("main");
+	private readonly list = new ChildList();
 	// True while a child view this list opened covers the screen; the list waits underneath, still open.
 	private viewing = false;
 	private shown = false;
