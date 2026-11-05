@@ -37,7 +37,7 @@ While this session has subagents running, or finished in the last ten minutes, o
 
 The `main` row is always first and marks where you are. A child waiting on its parent's answer (pi-subagents' `contact_supervisor`) shows as `asking`, and one with a tool call open past pi-subagents' threshold (`control.activeNoticeAfterMs` in its config, 4 minutes by default) as `long tool`; both come first in the summary line. pi-subagents keeps its flag after that call returns, so pi-attach shows `long tool` only while the call that is open now has run that long.
 
-Inside a child's view the same list stays under the editor, the shown child marked, so `main` and the other children are always one hop away. The cursor is already in it when you came from the list (start typing to talk to the child; `↓` on an empty editor puts the cursor back). Enter on another child switches the view to it and keeps the cursor in the list, Enter on `main` (or Esc in the view) goes back to the main session, with the list's cursor on the child you viewed last. The row under the editor also names other children waiting on an answer or a long tool call.
+Inside a child's view the same list stays under the editor, the shown child marked, so `main` and the other children are always one hop away. The cursor is already in it when you came from the list (start typing to talk to the child; `↓` on an empty editor puts the cursor back). Enter on another child switches the view to it and keeps the cursor in the list, Enter on `main` goes back to the main session with the list's cursor on `main`; Esc in the view goes back with the cursor on the child you viewed last, one Enter away. The row under the editor also names other children waiting on an answer or a long tool call.
 
 Other ways in:
 

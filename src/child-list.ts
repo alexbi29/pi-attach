@@ -105,7 +105,8 @@ type Scope = "recent" | "all";
 // A list row: the main session, always first, or a child.
 type Row = { kind: "main" } | { kind: "child"; entry: RosterEntry };
 
-const MAIN_KEY = "main";
+/** The list key of the "main" row. */
+export const MAIN_ROW_KEY = "main";
 
 /**
  * The list's state for one place; the owner feeds it run records and draws what it renders. The row on
@@ -119,7 +120,7 @@ export class ChildList {
 	private scope: Scope = "recent";
 	private selectedKey: string | undefined;
 	// A shown child stays listed even when it is no longer recent.
-	private current = MAIN_KEY;
+	private current = MAIN_ROW_KEY;
 	private openValue = false;
 
 	/** Whether ↑↓ move the selection instead of the editor cursor. */
@@ -163,7 +164,7 @@ export class ChildList {
 	open(): boolean {
 		if (this.all.length === 0) return false;
 		this.scope = this.recent.length > 0 ? "recent" : "all";
-		this.selectedKey = this.current === MAIN_KEY ? this.firstChildKey() : this.current;
+		this.selectedKey = this.current === MAIN_ROW_KEY ? this.firstChildKey() : this.current;
 		this.openValue = true;
 		return true;
 	}
@@ -235,7 +236,7 @@ export class ChildList {
 	}
 
 	private firstChildKey(): string {
-		return this.entries()[0]?.key ?? MAIN_KEY;
+		return this.entries()[0]?.key ?? MAIN_ROW_KEY;
 	}
 
 	private confirm(row: Row | undefined): ListKeyResult {
@@ -275,7 +276,7 @@ export class ChildList {
 const MAX_ROWS = 6;
 
 function rowKey(row: Row): string {
-	return row.kind === "main" ? MAIN_KEY : row.entry.key;
+	return row.kind === "main" ? MAIN_ROW_KEY : row.entry.key;
 }
 
 // One row's plain-text cells; `renderRow` pads and colors them.

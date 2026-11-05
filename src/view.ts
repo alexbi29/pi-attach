@@ -48,20 +48,23 @@ export interface ViewServices {
 /** Whether the view starts with its subagent list open: it does when entered from the list, to stay in it. */
 export type ListStart = "open" | "closed";
 
-/** Show `target` over the main chat until the user closes it; resolves with the child shown last. */
+/** How the user left the view: Enter on the list's "main" row, or back (Esc) from the child shown last. */
+export type ViewExit = { kind: "main" } | { kind: "back"; shown: ViewTarget };
+
+/** Show `target` over the main chat until the user closes it; resolves with how they left. */
 export async function openView(
 	target: ViewTarget,
 	list: ListStart,
 	services: ViewServices,
 	ctx: ExtensionContext,
-): Promise<ViewTarget | undefined> {
+): Promise<ViewExit | undefined> {
 	// Start as the main chat shows things. pi saves its thinking toggle to settings on every press, so the file
 	// is current; toggles inside the view stay in the view.
 	const display: TranscriptDisplay = {
 		toolsExpanded: ctx.ui.getToolsExpanded(),
 		hideThinking: SettingsManager.create(ctx.cwd).getHideThinkingBlock(),
 	};
-	return ctx.ui.custom<ViewTarget>(
+	return ctx.ui.custom<ViewExit>(
 		(tui, theme, keybindings, done) => new ChildView(tui, theme, keybindings, target, list, services, display, ctx.cwd, done),
 		// Covers the whole terminal so the child reads like the main chat, not a dialog.
 		{ overlay: true, overlayOptions: { anchor: "top-left", width: "100%", maxHeight: "100%", margin: 0 } },
@@ -85,7 +88,7 @@ class ChildView implements Component, Focusable {
 	// Replaced when a resume continues the child as a new async run.
 	private target: ViewTarget;
 	private readonly events: EventBus;
-	private readonly done: (shown: ViewTarget) => void;
+	private readonly done: (exit: ViewExit) => void;
 	private readonly main: MainActivity;
 	private readonly runs: SessionRuns | undefined;
 	private readonly longToolMs: number;
@@ -121,7 +124,7 @@ class ChildView implements Component, Focusable {
 		services: ViewServices,
 		display: TranscriptDisplay,
 		cwd: string,
-		done: (shown: ViewTarget) => void,
+		done: (exit: ViewExit) => void,
 	) {
 		this.tui = tui;
 		this.theme = theme;
@@ -190,8 +193,8 @@ class ChildView implements Component, Focusable {
 		const kb = this.keybindings;
 		if (this.list?.isOpen) return this.handleListKey(this.list, data);
 		// Esc means "back" here, not pi's abort: leaving the view must never stop the child by accident.
-		if (kb.matches(data, "app.interrupt")) return this.done(this.target);
-		if (kb.matches(data, "app.exit") && this.editor.getText() === "") return this.done(this.target);
+		if (kb.matches(data, "app.interrupt")) return this.back();
+		if (kb.matches(data, "app.exit") && this.editor.getText() === "") return this.back();
 		if (this.list && kb.matches(data, "tui.editor.cursorDown") && this.editor.getText() === "") {
 			this.list.open();
 			return this.tui.requestRender();
@@ -349,7 +352,7 @@ class ChildView implements Component, Focusable {
 
 	private handleListKey(list: ChildList, data: string): void {
 		const result = list.handleKey(data);
-		if (result.kind === "main") return this.done(this.target);
+		if (result.kind === "main") return this.done({ kind: "main" });
 		if (result.kind === "open") this.switchTo(list, result.target);
 		// Typing leaves the list and goes on into the editor.
 		if (result.kind === "passed") this.editor.handleInput(data);
@@ -369,6 +372,10 @@ class ChildView implements Component, Focusable {
 		this.scrollFromEnd = 0;
 		this.lastBodyLength = 0;
 		this.follow(target);
+	}
+
+	private back(): void {
+		this.done({ kind: "back", shown: this.target });
 	}
 
 	private clearOrInterrupt(): void {

@@ -1,16 +1,16 @@
 // The subagent list under the main editor: a one-line count, ↓ on an empty editor or the shortcut opens the list.
 import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { type Editor, getKeybindings, isKeyRelease, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
-import { ChildList, summary, targetKey } from "./child-list.ts";
+import { ChildList, MAIN_ROW_KEY, summary, targetKey } from "./child-list.ts";
 import { shortKeyHint } from "./format.ts";
 import type { SessionRuns } from "./run-status.ts";
-import type { ViewTarget } from "./view.ts";
+import type { ViewExit, ViewTarget } from "./view.ts";
 
 /** The widget and its keys for one session; `dispose` removes both. */
 export class Roster {
 	private readonly runs: SessionRuns;
-	// Shows the child view; resolves with the child shown last when the user leaves it.
-	private readonly onOpen: (target: ViewTarget) => Promise<ViewTarget | undefined>;
+	// Shows the child view; resolves with how the user left it.
+	private readonly onOpen: (target: ViewTarget) => Promise<ViewExit | undefined>;
 	private readonly ctx: ExtensionContext;
 	private readonly timer: NodeJS.Timeout;
 	private readonly stopInput: () => void;
@@ -20,7 +20,7 @@ export class Roster {
 	private shown = false;
 	private tui: TUI | undefined;
 
-	constructor(runs: SessionRuns, onOpen: (target: ViewTarget) => Promise<ViewTarget | undefined>, ctx: ExtensionContext) {
+	constructor(runs: SessionRuns, onOpen: (target: ViewTarget) => Promise<ViewExit | undefined>, ctx: ExtensionContext) {
 		this.runs = runs;
 		this.onOpen = onOpen;
 		this.ctx = ctx;
@@ -89,12 +89,12 @@ export class Roster {
 		return result.kind === "passed" ? undefined : CONSUME;
 	}
 
-	// Esc in the child view comes back to the list, on the child viewed last.
+	// Back to the list on the row the user left by: "main" when they chose it, the child viewed last on Esc.
 	private async view(target: ViewTarget): Promise<void> {
 		this.viewing = true;
 		try {
-			const last = await this.onOpen(target);
-			if (last) this.list.select(targetKey(last));
+			const exit = await this.onOpen(target);
+			if (exit) this.list.select(exit.kind === "main" ? MAIN_ROW_KEY : targetKey(exit.shown));
 		} finally {
 			this.viewing = false;
 			this.refresh();

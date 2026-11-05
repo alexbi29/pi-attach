@@ -5,7 +5,7 @@ import type { ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, type TUI, visibleWidth } from "@earendil-works/pi-tui";
 import { Roster } from "../src/roster.ts";
 import type { RunStatus, SessionRuns } from "../src/run-status.ts";
-import type { ViewTarget } from "../src/view.ts";
+import type { ViewExit, ViewTarget } from "../src/view.ts";
 
 import { child, MINUTE, run } from "./fixtures.ts";
 
@@ -33,11 +33,11 @@ function harness(runs: RunStatus[]) {
 			notify: (message: string) => notices.push(message),
 		},
 	} as unknown as ExtensionContext;
-	// The child view stays open until the test calls closeView(), which reports the child shown last.
-	let closeView = (_shown?: ViewTarget) => {};
+	// The child view stays open until the test calls closeView(), which reports how the user left it.
+	let closeView = (_exit?: ViewExit) => {};
 	const open = (target: ViewTarget) => {
 		opened.push(target);
-		return new Promise<ViewTarget | undefined>((resolve) => {
+		return new Promise<ViewExit | undefined>((resolve) => {
 			closeView = resolve;
 		});
 	};
@@ -46,8 +46,8 @@ function harness(runs: RunStatus[]) {
 		roster,
 		opened,
 		// Leave the child view, then let the list notice.
-		closeView: async (shown?: ViewTarget) => {
-			closeView(shown);
+		closeView: async (exit?: ViewExit) => {
+			closeView(exit);
 			await new Promise((resolve) => setImmediate(resolve));
 		},
 		notices,
@@ -111,8 +111,17 @@ describe("Roster", () => {
 		const ui = harness(twoChildren());
 		ui.press(DOWN);
 		ui.press(ENTER);
-		await ui.closeView({ runId: "a", asyncDir: "/runs/a", index: 0 });
+		await ui.closeView({ kind: "back", shown: { runId: "a", asyncDir: "/runs/a", index: 0 } });
 		assert.match(ui.lines()[2] ?? "", /^› delegate {2}first task/);
+		ui.roster.dispose();
+	});
+
+	it("puts the cursor on main when the user left the view by choosing main", async () => {
+		const ui = harness(twoChildren());
+		ui.press(DOWN);
+		ui.press(ENTER);
+		await ui.closeView({ kind: "main" });
+		assert.match(ui.lines()[0] ?? "", /^› main/);
 		ui.roster.dispose();
 	});
 
